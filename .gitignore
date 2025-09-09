@@ -54,3 +54,4 @@ cymj.c
 *.so
 .python-version
 /build
+/runs

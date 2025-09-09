@@ -12,10 +12,11 @@ def run(model_path, episodes=5):
         while not done:
             a, _ = model.predict(o['blue'], deterministic=True)
             o, r, term, trunc, _ = env.step({'blue': a})
-            env.render()
+            # env.render()
             R += r['blue']
             done = term['blue'] or trunc['blue']
         print(f"Episode {ep+1}: return={R:.2f}")
+        
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", type=str, required=True)

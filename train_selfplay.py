@@ -3,8 +3,10 @@ import numpy as np
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import DummyVecEnv
 from stable_baselines3.common.env_util import make_vec_env
+from stable_baselines3.common.callbacks import BaseCallback
 from eurobot_env import EurobotMJ
 from gymnasium.wrappers import TimeLimit
+from tqdm import tqdm
 
 def make_env(scripted_opponent=True, max_steps=1200):
     def _thunk():
@@ -25,6 +27,21 @@ def make_env(scripted_opponent=True, max_steps=1200):
         return TimeLimit(BlueWrapper(env), max_episode_steps=max_steps)
     return _thunk
 
+class ProgressBarCallback(BaseCallback):
+    def __init__(self, total, initial=0):
+        super().__init__()
+        self.bar = tqdm(total=total, initial=initial, unit="step", smoothing=0.1, leave=False)
+        self._last = 0
+
+    def _on_step(self) -> bool:
+        cur = self.model.num_timesteps
+        self.bar.update(cur - self._last)
+        self._last = cur
+        return True
+
+    def _on_training_end(self) -> None:
+        self.bar.close()
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--timesteps", type=int, default=1_000_000)
@@ -33,11 +50,12 @@ if __name__ == "__main__":
 
     os.makedirs("runs", exist_ok=True)
     env = make_vec_env(make_env(scripted_opponent=True), n_envs=8)
-    model = PPO("MlpPolicy", env, n_steps=256, batch_size=1024, ent_coef=0.01, learning_rate=3e-4, gamma=0.995, verbose=1)
+    model = PPO("MlpPolicy", env, n_steps=256, batch_size=1024, ent_coef=0.01, learning_rate=3e-4, gamma=0.995, verbose=0, tensorboard_log="runs/tb")
     total = 0
     ckpt_path = "runs/ppo_blue_last.zip"
     while total < args.timesteps:
-        model.learn(total_timesteps=100_000, reset_num_timesteps=False)
+        cb = ProgressBarCallback(total=args.timesteps, initial=total)
+        model.learn(total_timesteps=100_000, reset_num_timesteps=False, callback=cb)
         total += 100_000
         model.save(ckpt_path)
         print(f"Saved {ckpt_path} at {total} steps")
