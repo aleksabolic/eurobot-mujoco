@@ -6,8 +6,10 @@
     <texture name="playmat_tex" type="2d" file="table_bis.png"/>
     <material name="playmat_mat" texture="playmat_tex" rgba="1 1 1 1"/>
 
+    <texture name="granary_tex" type="2d" file="granary_bis.png"/>
+    <material name="granary_mat" texture="granary_tex" rgba="1 1 1 1"/>
+
     <material name="border_mat" rgba="0.71 0.69 0.63 1"/>
-    <material name="granary_mat" rgba="0.55 0.34 0.10 1"/>
   </asset>
 
   <worldbody>
