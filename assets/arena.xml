@@ -23,71 +23,149 @@
 
 
     <!-- Hazelnut crates -->
-    
-    <!-- ===== Collect crates: touching on 15cm × 3cm faces ===== -->
+    <!-- Group 1 @ (1100,100) -->
+    <body name="collect_crate_1_0" pos="-0.475 -0.87500 0.017">
+      <freejoint/>
+      <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
+    </body>
+    <body name="collect_crate_1_1" pos="-0.425 -0.87500 0.017">
+      <freejoint/>
+      <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/>
+    </body>
+    <body name="collect_crate_1_2" pos="-0.375 -0.87500 0.017">
+      <freejoint/>
+      <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
+    </body>
+    <body name="collect_crate_1_3" pos="-0.325 -0.87500 0.017">
+      <freejoint/>
+      <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/>
+    </body>
 
-    <!-- ===== Collect crates: touching on 15cm × 3cm faces ===== -->
+    <!-- Group 2 @ (1900,100) -->
+    <body name="collect_crate_2_0" pos="0.325 -0.87500 0.017">
+      <freejoint/>
+      <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
+    </body>
+    <body name="collect_crate_2_1" pos="0.375 -0.87500 0.017">
+      <freejoint/>
+      <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/>
+    </body>
+    <body name="collect_crate_2_2" pos="0.425 -0.87500 0.017">
+      <freejoint/>
+      <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
+    </body>
+    <body name="collect_crate_2_3" pos="0.475 -0.87500 0.017">
+      <freejoint/>
+      <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/>
+    </body>
 
-    <!-- Group 1 @ (1100,100)  long-axis X, stack along Y -->
-    <!-- <body name="collect_crate_1_0" pos="-0.400 -0.975 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-    <body name="collect_crate_1_1" pos="-0.400 -0.925 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-    <body name="collect_crate_1_2" pos="-0.400 -0.875 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-    <body name="collect_crate_1_3" pos="-0.400 -0.825 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/></body> -->
+    <!-- Group 3 @ (150,400)  -->
+    <body name="collect_crate_3_0" pos="-1.3750 -0.675 0.017">
+      <freejoint/>
+      <geom type="box" size="0.075 0.025 0.015" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/>
+    </body>
+    <body name="collect_crate_3_1" pos="-1.3750 -0.625 0.017">
+      <freejoint/>
+      <geom type="box" size="0.075 0.025 0.015" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
+    </body>
+    <body name="collect_crate_3_2" pos="-1.3750 -0.575 0.017">
+      <freejoint/>
+      <geom type="box" size="0.075 0.025 0.015" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/>
+    </body>
+    <body name="collect_crate_3_3" pos="-1.3750 -0.525 0.017">
+      <freejoint/>
+      <geom type="box" size="0.075 0.025 0.015" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
+    </body>
 
-    <!-- Group 2 @ (1900,100)  long-axis X, stack along Y -->
-    <!-- <body name="collect_crate_2_0" pos="0.400 -0.975 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-    <body name="collect_crate_2_1" pos="0.400 -0.925 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-    <body name="collect_crate_2_2" pos="0.400 -0.875 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-    <body name="collect_crate_2_3" pos="0.400 -0.825 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/></body> -->
+    <!-- Group 4 @ (2850,400) -->
+    <body name="collect_crate_4_0" pos="1.3750 -0.675 0.017">
+      <freejoint/>
+      <geom type="box" size="0.075 0.025 0.015" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/>
+    </body>
+    <body name="collect_crate_4_1" pos="1.3750 -0.625 0.017">
+      <freejoint/>
+      <geom type="box" size="0.075 0.025 0.015" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
+    </body>
+    <body name="collect_crate_4_2" pos="1.3750 -0.575 0.017">
+      <freejoint/>
+      <geom type="box" size="0.075 0.025 0.015" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/>
+    </body>
+    <body name="collect_crate_4_3" pos="1.3750 -0.525 0.017">
+      <freejoint/>
+      <geom type="box" size="0.075 0.025 0.015" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
+    </body>
 
-    <!-- Group 3 @ (150,400)   long-axis X, stack along Y -->
-    <body name="collect_crate_3_0" pos="-1.3750 -0.675 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-    <body name="collect_crate_3_1" pos="-1.3750 -0.625 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-    <body name="collect_crate_3_2" pos="-1.3750 -0.575 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-    <body name="collect_crate_3_3" pos="-1.3750 -0.525 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/></body>
+    <!-- Group 5 @ (150,1200) -->
+    <body name="collect_crate_5_0" pos="-1.3750 0.125 0.017">
+      <freejoint/>
+      <geom type="box" size="0.075 0.025 0.015" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/>
+    </body>
+    <body name="collect_crate_5_1" pos="-1.3750 0.175 0.017">
+      <freejoint/>
+      <geom type="box" size="0.075 0.025 0.015" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
+    </body>
+    <body name="collect_crate_5_2" pos="-1.3750 0.225 0.017">
+      <freejoint/>
+      <geom type="box" size="0.075 0.025 0.015" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/>
+    </body>
+    <body name="collect_crate_5_3" pos="-1.3750 0.275 0.017">
+      <freejoint/>
+      <geom type="box" size="0.075 0.025 0.015" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
+    </body>
 
-    <!-- Group 4 @ (2850,400)  long-axis X, stack along Y -->
-    <body name="collect_crate_4_0" pos="1.3750 -0.675 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-    <body name="collect_crate_4_1" pos="1.3750 -0.625 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-    <body name="collect_crate_4_2" pos="1.3750 -0.575 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-    <body name="collect_crate_4_3" pos="1.3750 -0.525 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/></body>
+    <!-- Group 6 @ (2850,1200) -->
+    <body name="collect_crate_6_0" pos="1.3750 0.125 0.017">
+      <freejoint/>
+      <geom type="box" size="0.075 0.025 0.015" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/>
+    </body>
+    <body name="collect_crate_6_1" pos="1.3750 0.175 0.017">
+      <freejoint/>
+      <geom type="box" size="0.075 0.025 0.015" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
+    </body>
+    <body name="collect_crate_6_2" pos="1.3750 0.225 0.017">
+      <freejoint/>
+      <geom type="box" size="0.075 0.025 0.015" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/>
+    </body>
+    <body name="collect_crate_6_3" pos="1.3750 0.275 0.017">
+      <freejoint/>
+      <geom type="box" size="0.075 0.025 0.015" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
+    </body>
 
-    <!-- Group 5 @ (150,1200)  long-axis X, stack along Y -->
-    <body name="collect_crate_5_0" pos="-1.3750 0.125 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-    <body name="collect_crate_5_1" pos="-1.3750 0.175 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-    <body name="collect_crate_5_2" pos="-1.3750 0.225 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-    <body name="collect_crate_5_3" pos="-1.3750 0.275 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/></body>
+    <!-- Group 7 @ (1150,800) -->
+    <body name="collect_crate_7_0" pos="-0.425 -0.200 0.017">
+      <freejoint/>
+      <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/>
+    </body>
+    <body name="collect_crate_7_1" pos="-0.375 -0.200 0.017">
+      <freejoint/>
+      <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
+    </body>
+    <body name="collect_crate_7_2" pos="-0.325 -0.200 0.017">
+      <freejoint/>
+      <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/>
+    </body>
+    <body name="collect_crate_7_3" pos="-0.275 -0.200 0.017">
+      <freejoint/>
+      <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
+    </body>
 
-    <!-- Group 6 @ (2850,1200) long-axis X, stack along Y -->
-    <body name="collect_crate_6_0" pos="1.3750 0.125 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-    <body name="collect_crate_6_1" pos="1.3750 0.175 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-    <body name="collect_crate_6_2" pos="1.3750 0.225 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-    <body name="collect_crate_6_3" pos="1.3750 0.275 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-
-    <!-- Group 7 @ (1150,800) long-axis Y (rot 90°), stack along X -->
-    <body name="collect_crate_7_0" pos="-0.425 -0.200 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-    <body name="collect_crate_7_1" pos="-0.375 -0.200 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-    <body name="collect_crate_7_2" pos="-0.325 -0.200 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-    <body name="collect_crate_7_3" pos="-0.275 -0.200 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-
-    <!-- Group 8 @ (1850,800) long-axis Y (rot 90°), stack along X -->
-    <body name="collect_crate_8_0" pos="0.275 -0.200 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-    <body name="collect_crate_8_1" pos="0.325 -0.200 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-    <body name="collect_crate_8_2" pos="0.375 -0.200 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-    <body name="collect_crate_8_3" pos="0.425 -0.200 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-
-    <!-- Kopije umesto 1. i 2.-->
-    <!-- Group 7 @ (1150,800) long-axis Y (rot 90°), stack along X -->
-    <body name="collect_crate_72_3" pos="-0.475 -0.87500 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-    <body name="collect_crate_72_0" pos="-0.425 -0.87500 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-    <body name="collect_crate_72_1" pos="-0.375 -0.87500 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-    <body name="collect_crate_72_2" pos="-0.325 -0.87500 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-
-    <!-- Group 8 @ (1850,800) long-axis Y (rot 90°), stack along X -->
-    <body name="collect_crate_82_1" pos="0.325 -0.87500 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-    <body name="collect_crate_82_2" pos="0.375 -0.87500 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-    <body name="collect_crate_82_3" pos="0.425 -0.87500 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/></body>
-    <body name="collect_crate_82_0" pos="0.475 -0.87500 0.017"><freejoint/><geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/></body>
+    <!-- Group 8 @ (1850,800) -->
+    <body name="collect_crate_8_0" pos="0.275 -0.200 0.017">
+      <freejoint/>
+      <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/>
+    </body>
+    <body name="collect_crate_8_1" pos="0.325 -0.200 0.017">
+      <freejoint/>
+      <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
+    </body>
+    <body name="collect_crate_8_2" pos="0.375 -0.200 0.017">
+      <freejoint/>
+      <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/>
+    </body>
+    <body name="collect_crate_8_3" pos="0.425 -0.200 0.017">
+      <freejoint/>
+      <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
+    </body>
 
   </worldbody>
 </mujoco>
