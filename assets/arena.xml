@@ -24,7 +24,7 @@
     <geom name="wall_west" type="box" pos="0.000000 -1.011000 0.035000" size="1.500000 0.011000 0.035000" material="border_mat" contype="1" conaffinity="1"/>
 
     <!-- Granary -->
-    <geom name="granary" type="box" pos="0.0 0.8 0.027500" size="0.900000 0.225000 0.027500" material="granary_mat" contype="1" conaffinity="1"/>
+    <geom name="granary" type="box" pos="0.0 0.775 0.027500" size="0.900000 0.225000 0.027500" material="granary_mat" contype="1" conaffinity="1"/>
 
     <!-- Pantries -->
     <geom name="pantry_1" type="box" pos="-1.050000 -0.800000 0.001000" size="0.100000 0.100000 0.001000" material="pantry_mat" contype="1" conaffinity="1" rgba="0.27 0.63 0.27 0.3"/>
