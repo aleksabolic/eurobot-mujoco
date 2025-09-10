@@ -5,6 +5,8 @@ Minimal, fast simulator to explore Eurobot 2026 tactics with RL.
 - PettingZoo ParallelEnv (`EurobotMJ`) with entity-centric observations.
 - PPO self-play scaffold: train vs scripted bot, then load last checkpoint as opponent.
 
+![viz](screenshot.png)
+
 ## Setup
 ```bash
 python -m venv .venv && source .venv/bin/activate
