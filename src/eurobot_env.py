@@ -39,7 +39,7 @@ class EurobotMJ(ParallelEnv):
         self.rng = np.random.default_rng()
 
     def _build_spaces(self):
-        # obs: ego (x,y,theta,carry), opp (x,y,theta), top-K crates (dx,dy,dist,free), pantry majority proxy (counts not simulated fully -> 0), time_left
+        # observation: ego (x,y,theta,carry), opp (x,y,theta), top-K crates (dx,dy,dist,free), pantry majority proxy (counts not simulated fully -> 0), time_left
         K = 6
         self.K = K
         obs_dim = 4 + 3 + K*4 + 1
