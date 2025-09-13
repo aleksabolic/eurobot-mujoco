@@ -1,4 +1,4 @@
-# Eurobot MuJoCo Starter
+# Eurobot MuJoCo
 
 Minimal, fast simulator to explore Eurobot 2026 tactics with RL.
 - 2D-ish MuJoCo world (3x2 m), two differential-drive robots, crates, pantries.

@@ -4,233 +4,337 @@ from pettingzoo import ParallelEnv
 import mujoco
 import mujoco.viewer
 
-DT = 0.05  # 20 Hz ctrl
+# -------------------- Constants --------------------
+CTRL_DT = 0.05                       # Control period (20 Hz)
+WORLD_TIMESTEP = None                # If None, uses model.opt.timestep
+MAX_LIN_SPEED = 0.6                  # m/s (|v|<=1 scales to this)
+MAX_ANG_SPEED = 2.0                  # rad/s (|w|<=1 scales to this)
+PICK_RADIUS = 0.18                   # m
 
+# Top->Bottom, Left->Right
 PANTRIES = {
-    'A': np.array([ 0.8,  0.6]),
-    'B': np.array([-0.8,  0.6]),
-    'C': np.array([ 0.8, -0.6]),
-    'D': np.array([-0.8, -0.6]),
+    "A": np.array([-0.25, 0.45]),
+    "B": np.array([ 0.25, 0.45]),
+    "C": np.array([-1.4, -0.2]),
+    "D": np.array([-0.7, -0.2]),
+    "E": np.array([ 0.0, -0.2]),
+    "F": np.array([ 0.7, -0.2]),
+    "G": np.array([ 1.4, -0.2]),
+    "H": np.array([-0.8, -0.9]),
+    "I": np.array([ 0.0, -0.9]),
+    "J": np.array([ 0.8, -0.9]),
 }
-NESTS = {'blue': np.array([-1.125, -0.7]), 'yellow': np.array([1.125, 0.7])}
 PANTRY_R = 0.10
-NEST_SIZE = np.array([0.225, 0.3])
 
-def within_rect(p, center, half):
+# Top->Bottom, Left->Right
+PICKUPS = {
+    "P1": np.array([-0.30, -0.20]),
+    "P2": np.array([ 0.30, -0.20]),
+    "P3": np.array([-0.30,  0.20]),
+    "P4": np.array([ 0.30,  0.20]),
+}
+PICKUP_R = 0.15 
+
+NESTS = {"blue": np.array([-1.125, -0.7]),
+         "yellow": np.array([ 1.125,  0.7])}
+NEST_HALF_SIZE = np.array([0.225, 0.3])  # half-widths (x,y)
+
+AGENTS = ["blue", "yellow"]
+ACT_SUFFIXES = ["x_act", "y_act", "yaw_act"]
+
+COLOR_TO_INT = {"blue": 1, "yellow": 2}
+INT_TO_COLOR = {1: "blue", 2: "yellow"}
+
+def within_circle(p, center, r):
+    return np.linalg.norm(p - center) <= r
+
+def within_rect(p: np.ndarray, center: np.ndarray, half: np.ndarray) -> bool:
+    """Axis-aligned rectangle hit-test using center and half-sizes."""
     d = np.abs(p - center)
     return (d[0] <= half[0]) and (d[1] <= half[1])
 
 class EurobotMJ(ParallelEnv):
-    metadata = {"name": "EurobotMJ-v0", "render_fps": int(1/DT)}
-    def __init__(self, xml_path="assets/arena.xml", n_crates=8, max_steps=2000, scripted_opponent=True):
-        self.xml_path = xml_path
-        self.n_crates = n_crates
-        self.max_steps = max_steps
-        self.scripted_opponent = scripted_opponent
-        self.agents = ['blue', 'yellow']
-        self.pos_act = ['blue_x_act','blue_y_act','blue_yaw_act','yellow_x_act','yellow_y_act','yellow_yaw_act']
-        self._build_spaces()
-        self._model = mujoco.MjModel.from_xml_path(self.xml_path)
-        self._data = mujoco.MjData(self._model)
-        self._t = 0
+    """
+    Parallel Eurobot MJ environment.
 
-        # carry state
-        self.carry = {'blue': -1, 'yellow': -1}  # crate idx held
+    Observations per agent (float32 vector):
+        [my_x, my_y, my_yaw, carrying_flag,
+         opp_x, opp_y, opp_yaw,
+         pickup occupancy,
+         pantry occupancy,
+         time_left_normalized]
+
+    Actions per agent (Box):
+        [v_scaled, w_scaled, op] where
+          v_scaled in [-1,1] -> linear v in [-MAX_LIN_SPEED, +MAX_LIN_SPEED]
+          w_scaled in [-1,1] -> angular w in [-MAX_ANG_SPEED, +MAX_ANG_SPEED]
+          op in {0: noop, 1: pick, 2: drop}  (passed in as float, rounded)
+    """
+    metadata = {"name": "EurobotMJ-v0", "render_fps": int(1 / CTRL_DT)}
+
+    def __init__(self,
+                 xml_path: str = "assets/arena.xml",
+                 max_steps: int = 2000,
+                 scripted_opponent: bool = True):
+        self.xml_path = xml_path
+        self.max_steps = int(max_steps)
+        self.scripted_opponent = bool(scripted_opponent)
+
+        self.agents = AGENTS[:]  # ['blue', 'yellow']
+
+        self.pickup_names = list(PICKUPS.keys())
+        self.pantry_names = list(PANTRIES.keys())
+
+        # Zone states (discrete)
+        # pickup_occ[i] ∈ {0,1}: 1 means a full batch is available to pick.
+        self.pickup_occ = np.ones(len(self.pickup_names), dtype=np.int32)
+
+        # pantry_occ[i] ∈ {0,1,2}: 0 empty, 1 blue, 2 yellow (who currently holds it)
+        self.pantry_occ = np.zeros(len(self.pantry_names), dtype=np.int32)
+
+        # Carry state: -1 means not carrying, otherwise 1 (carrying a full batch)
+        self.carry = {"blue": -1, "yellow": -1}
+
+        # Load MJ model/data
+        self._model = mujoco.MjModel.from_xml_path(self.xml_path)
+        if WORLD_TIMESTEP is not None:
+            self._model.opt.timestep = float(WORLD_TIMESTEP)
+        self._data = mujoco.MjData(self._model)
+
+        # Cache name->id where helpful
+        self._act_ids = {
+            a: {
+                "x": self._model.actuator(f"{a}_x_act").id,
+                "y": self._model.actuator(f"{a}_y_act").id,
+                "yaw": self._model.actuator(f"{a}_yaw_act").id,
+            } for a in self.agents
+        }
+        self._site_ids = {a: self._model.site(f"{a}_grip").id for a in self.agents}
+
+        # Build spaces
+        self._init_spaces()
+
+        # State
+        self._t = 0.0
+        self._step_count = 0
+        self.carry = {"blue": -1, "yellow": -1}  # crate index carried or -1
         self.rng = np.random.default_rng()
 
-    def _build_spaces(self):
-        # observation: ego (x,y,theta,carry), opp (x,y,theta), top-K crates (dx,dy,dist,free), pantry majority proxy (counts not simulated fully -> 0), time_left
-        K = 6
-        self.K = K
-        obs_dim = 4 + 3 + K*4 + 1
-        self.observation_spaces = {a: spaces.Box(-np.inf, np.inf, (obs_dim,), dtype=np.float32) for a in self.agents}
-        # action: [v, omega] in [-1,1], discrete op {0:noop,1:pick,2:drop}
-        self.action_spaces = {a: spaces.Box(low=np.array([-1., -1., 0.]), high=np.array([1., 1., 2.]), dtype=np.float32) for a in self.agents}
+    # -------------------- Spaces --------------------
+    def _init_spaces(self):
+        obs_dim = (4  # my (x, y, yaw, carrying_flag)
+                   + 3  # opp (x, y, yaw)
+                   + len(self.pickup_names) # pickup occupancy (0/1)
+                   + len(self.pantry_names) # pantry occupancy (0/1/2)
+                   + 1)  # time_left
+        self.observation_spaces = {
+            a: spaces.Box(-np.inf, np.inf, (obs_dim,), dtype=np.float32)
+            for a in self.agents
+        }
+        # [v, w, op] with op ∈ {0,1,2} but kept continuous for a simple API
+        self.action_spaces = {
+            a: spaces.Box(low=np.array([-1., -1., 0.], dtype=np.float32),
+                          high=np.array([ 1.,  1., 2.], dtype=np.float32),
+                          dtype=np.float32)
+            for a in self.agents
+        }
 
-    # ----- utility -----
-    def _qpos_idx(self, name):
-        j = self._model.joint(name).id
+    # -------------------- MJ helpers --------------------
+    def _qpos_index(self, joint_name: str) -> int:
+        j = self._model.joint(joint_name).id
         return self._model.jnt_qposadr[j]
 
-    def _body_pos(self, name):
-        bid = self._model.body(name).id
+    def _body_xy(self, body_name: str) -> np.ndarray:
+        bid = self._model.body(body_name).id
         return self._data.xpos[bid][:2].copy()
 
-    def _body_yaw(self, name):
-        bid = self._model.body(name).id
-        # yaw from xmat
-        m = self._data.xmat[bid].reshape(3,3)
-        yaw = np.arctan2(m[1,0], m[0,0])
-        return yaw
+    def _body_yaw(self, body_name: str) -> float:
+        bid = self._model.body(body_name).id
+        m = self._data.xmat[bid].reshape(3, 3)
+        return float(np.arctan2(m[1, 0], m[0, 0]))
 
-    def reset(self, seed=None, options=None):
+    def _set_body_pose2d(self, body_name: str, pos_xy: np.ndarray, yaw: float):
+        """Set free2D (x, y, yaw) pose for a named body that has 3 planar joints."""
+        bid = self._model.body(body_name).id
+        adr = self._model.body_jntadr[bid]
+        self._data.qpos[self._model.jnt_qposadr[adr + 0]] = float(pos_xy[0])
+        self._data.qpos[self._model.jnt_qposadr[adr + 1]] = float(pos_xy[1])
+        self._data.qpos[self._model.jnt_qposadr[adr + 2]] = float(yaw)
+
+    def _set_agent_pose(self, agent: str, pos_xy: np.ndarray, yaw: float):
+        self._data.qpos[self._qpos_index(f"{agent}_x")] = float(pos_xy[0])
+        self._data.qpos[self._qpos_index(f"{agent}_y")] = float(pos_xy[1])
+        self._data.qpos[self._qpos_index(f"{agent}_yaw")] = float(yaw)
+
+    # -------------------- API: reset/step/render --------------------
+    def reset(self, seed: int | None = None, options=None):
         if seed is not None:
             self.rng = np.random.default_rng(seed)
+
         mujoco.mj_resetData(self._model, self._data)
-        self._t = 0
-        # spawn robots
-        for a, pos in {'blue':(-1.0, -0.5), 'yellow':(1.0, 0.5)}.items():
-            self._set_pose(a, np.array(pos), 0.0)
-        # spawn crates jittered
-        for i in range(self.n_crates):
-            name = f"crate{i}"
-            if i >= self._model.nbody:
-                break
-            p = self.rng.uniform(low=[-0.6,-0.4], high=[0.6,0.4])
-            self._set_body2d(name, p, 0.0)
-        self.carry = {'blue': -1, 'yellow': -1}
+        self._t = 0.0
         self._step_count = 0
-        obs = {a:self._obs(a) for a in self.agents}
-        return obs, {a:{} for a in self.agents}
+        self.pickup_occ[:] = 1
+        self.pantry_occ[:] = 0
+        self.carry = {"blue": -1, "yellow": -1}
 
-    def _set_pose(self, agent, pos, yaw):
-        bx, by = f"{agent}_x", f"{agent}_y"
-        self._data.qpos[self._qpos_idx(bx)] = pos[0]
-        self._data.qpos[self._qpos_idx(by)] = pos[1]
-        self._data.qpos[self._qpos_idx(f"{agent}_yaw")] = yaw
+        # Spawn robots
+        self._set_agent_pose("blue",   np.array([-1.0, -0.5]), 0.0)
+        self._set_agent_pose("yellow", np.array([ 1.0,  0.5]), 0.0)
 
-    def _set_body2d(self, name, pos, yaw):
-        bid = self._model.body(name).id
-        adr = self._model.body_jntadr[bid]
-        self._data.qpos[self._model.jnt_qposadr[adr+0]] = pos[0]
-        self._data.qpos[self._model.jnt_qposadr[adr+1]] = pos[1]
-        self._data.qpos[self._model.jnt_qposadr[adr+2]] = yaw
 
-    def _ego_tuple(self, a):
-        p = self._body_pos(a)
-        th = self._body_yaw(a)
-        carry = 1.0 if self.carry[a] >= 0 else 0.0
-        return p, th, carry
+        obs = {a: self._observe(a) for a in self.agents}
+        return obs, {a: {} for a in self.agents}
 
-    def _obs(self, a):
-        o = 1 if a=='blue' else 0
-        me, opp = self.agents[o], self.agents[1-o]
-        p, th, carry = self._ego_tuple(me)
-        p_opp, th_opp, _ = self._ego_tuple(opp)
+    def step(self, actions: dict[str, np.ndarray]):
+        # Blue from actions, Yellow scripted unless user provides both
+        a_blue = actions["blue"]
+        a_yellow = self._scripted_policy("yellow") if self.scripted_opponent else actions["yellow"]
 
-        # crates
-        crates = []
-        for i in range(self.n_crates):
-            name = f"crate{i}"
-            try:
-                cp = self._body_pos(name)
-            except Exception:
-                continue
-            free = 1.0 if (i != self.carry['blue'] and i != self.carry['yellow']) else 0.0
-            d = cp - p
-            crates.append(np.array([d[0], d[1], np.linalg.norm(d), free]))
-        if len(crates)==0:
-            crates = [np.zeros(4)]
-        crates = np.array(crates)
-        crates = crates[crates[:,2].argsort()][:self.K]
-        if crates.shape[0] < self.K:
-            crates = np.vstack([crates, np.zeros((self.K - crates.shape[0], 4))])
+        # Apply kinematic targets via position actuators
+        self._apply_action("blue", a_blue)
+        self._apply_action("yellow", a_yellow)
 
-        time_left = 1.0 - (self._step_count / self.max_steps)
-        obs = np.concatenate([p, [th, carry], p_opp, [th_opp], crates.flatten(), [time_left]]).astype(np.float32)
-        return obs
-
-    def step(self, actions):
-        # opponent: scripted or last action if provided
-        a_blue = actions['blue']
-        if self.scripted_opponent:
-            a_yellow = self._scripted('yellow')
-        else:
-            a_yellow = actions['yellow']
-
-        # integrate simple kinematics via position actuators (target next pose)
-        self._apply_agent('blue', a_blue)
-        self._apply_agent('yellow', a_yellow)
-
-        # step physics a few substeps
-        sub = int(DT / self._model.opt.timestep)
-        for _ in range(max(1, sub)):
+        # Simulate until CTRL_DT has elapsed (substeps depend on model timestep)
+        substeps = int(CTRL_DT / self._model.opt.timestep)
+        for _ in range(max(1, substeps)):
             mujoco.mj_step(self._model, self._data)
 
         self._step_count += 1
+        self._t += CTRL_DT
+
+        obs = {a: self._observe(a) for a in self.agents}
+        rew_blue, rew_yellow = self._score_both()
         term = self._step_count >= self.max_steps
-        obs = {a:self._obs(a) for a in self.agents}
-        rew_b, rew_y = self._score()
-        rews = {'blue': rew_b, 'yellow': rew_y}
-        terms = {'blue': term, 'yellow': term}
-        truncs = {'blue': False, 'yellow': False}
-        infos = {'blue': {}, 'yellow': {}}
+        rews = {"blue": rew_blue, "yellow": rew_yellow}
+        terms = {"blue": term, "yellow": term}
+        truncs = {"blue": False, "yellow": False}
+        infos = {"blue": {}, "yellow": {}}
         return obs, rews, terms, truncs, infos
 
-    def _apply_agent(self, agent, a):
-        v = float(np.clip(a[0], -1, 1)) * 0.6  # m/s
-        w = float(np.clip(a[1], -1, 1)) * 2.0  # rad/s
-        op = int(round(np.clip(a[2], 0, 2)))
-
-        p = self._body_pos(agent)
-        th = self._body_yaw(agent)
-        target = p + np.array([np.cos(th), np.sin(th)]) * v * DT
-        yaw_t = th + w * DT
-
-        self._data.ctrl[self._model.actuator('{}_x_act'.format(agent)).id] = target[0]
-        self._data.ctrl[self._model.actuator('{}_y_act'.format(agent)).id] = target[1]
-        self._data.ctrl[self._model.actuator('{}_yaw_act'.format(agent)).id] = yaw_t
-
-        if op==1:  # pick nearest free crate within 0.18 m
-            if self.carry[agent] == -1:
-                idx = self._nearest_free_crate(agent, radius=0.18)
-                if idx>=0: self.carry[agent] = idx
-        elif op==2:  # drop
-            if self.carry[agent] != -1:
-                # place crate at grip pose
-                gid = self.carry[agent]
-                gpos = self._grip_pos(agent)
-                self._set_body2d(f"crate{gid}", gpos, 0.0)
-                self.carry[agent] = -1
-
-    def _grip_pos(self, agent):
-        site = self._model.site(f"{agent}_grip").id
-        return self._data.site_xpos[site][:2].copy()
-
-    def _nearest_free_crate(self, agent, radius=0.18):
-        me_p = self._body_pos(agent)
-        best, bestd = -1, 1e9
-        for i in range(self.n_crates):
-            if i == self.carry['blue'] or i == self.carry['yellow']:
-                continue
-            cp = self._body_pos(f"crate{i}")
-            d = np.linalg.norm(cp - me_p)
-            if d < bestd and d <= radius:
-                best, bestd = i, d
-        return best
-
-    # simplistic score: +1 for crate in own nest area flat, +1 for crate in pantry area (any)
-    def _score(self):
-        def crate_score(owner):
-            s = 0.0
-            for i in range(self.n_crates):
-                cp = self._body_pos(f"crate{i}")
-                if within_rect(cp, NESTS[owner], NEST_SIZE): s += 1.0
-                for ctr in PANTRIES.values():
-                    if np.linalg.norm(cp-ctr) <= PANTRY_R: s += 0.5
-            return s
-        return crate_score('blue'), crate_score('yellow')
-
-    def _scripted(self, agent):
-        # greedy: pick nearest crate, carry to own nest, drop, repeat
-        p = self._body_pos(agent); th = self._body_yaw(agent)
-        if self.carry[agent] == -1:
-            # go to nearest free crate
-            idx = self._nearest_free_crate(agent, radius=10.0)
-            tgt = self._body_pos(f"crate{idx}") if idx>=0 else NESTS[agent]
-            op = 1 if np.linalg.norm(tgt - p) < 0.16 else 0
-        else:
-            tgt = NESTS[agent]
-            op = 2 if within_rect(p, tgt, NEST_SIZE) else 0
-        # steer to tgt
-        v = 0.6
-        ang = np.arctan2((tgt-p)[1], (tgt-p)[0])
-        w = np.clip((ang - th + np.pi)%(2*np.pi)-np.pi, -2.0, 2.0)
-        return np.array([v/0.6, w/2.0, op], dtype=np.float32)
-
-    # optional viewer
     def render(self):
         viewer = mujoco.viewer.launch_passive(self._model, self._data)
         while viewer.is_running():
             mujoco.mj_step(self._model, self._data)
             viewer.sync()
+
+    # -------------------- Observation --------------------
+    def _ego(self, agent: str) -> tuple[np.ndarray, float, float]:
+        """Return (my_xy, my_yaw, carrying_flag)."""
+        p = self._body_xy(agent)
+        th = self._body_yaw(agent)
+        carrying = 1.0 if self.carry[agent] >= 0 else 0.0
+        return p, th, carrying
+
+    def _observe(self, agent: str) -> np.ndarray:
+        me_idx = 0 if agent == "blue" else 1
+        me, opp = self.agents[me_idx], self.agents[1 - me_idx]
+
+        my_xy = self._body_xy(me)
+        my_yaw = self._body_yaw(me)
+        carrying = 1.0 if self.carry[me] > 0 else 0.0
+
+        opp_xy = self._body_xy(opp)
+        opp_yaw = self._body_yaw(opp)
+
+        # Normalize discrete occupancies to floats
+        pickup_vec = self.pickup_occ.astype(np.float32)              # 0/1
+        pantry_vec = self.pantry_occ.astype(np.float32)              # 0/1/2
+
+        time_left = 1.0 - (self._step_count / self.max_steps)
+
+        obs = np.concatenate([
+            my_xy, [my_yaw, carrying],
+            opp_xy, [opp_yaw],
+            pickup_vec,
+            pantry_vec,
+            [time_left]
+        ]).astype(np.float32)
+        return obs
+
+
+    # -------------------- Actions --------------------
+    def _apply_action(self, agent: str, a: np.ndarray):
+        v = float(np.clip(a[0], -1, 1)) * MAX_LIN_SPEED
+        w = float(np.clip(a[1], -1, 1)) * MAX_ANG_SPEED
+        op = int(round(np.clip(a[2], 0, 2)))
+
+        # Kinematic target (project forward one CTRL_DT)
+        p = self._body_xy(agent)
+        th = self._body_yaw(agent)
+        target_xy = p + np.array([np.cos(th), np.sin(th)]) * v * CTRL_DT
+        target_yaw = th + w * CTRL_DT
+
+        # Write actuator controls (x, y, yaw)
+        self._data.ctrl[self._act_ids[agent]["x"]] = target_xy[0]
+        self._data.ctrl[self._act_ids[agent]["y"]] = target_xy[1]
+        self._data.ctrl[self._act_ids[agent]["yaw"]] = target_yaw
+
+        # Discrete op
+        if op == 1:  # pick: if in any pickup zone with occ=1 and not carrying
+            if self.carry[agent] <= 0:
+                for i, name in enumerate(self.pickup_names):
+                    if self.pickup_occ[i] == 1 and within_circle(self._body_xy(agent), PICKUPS[name], PICKUP_R):
+                        self.pickup_occ[i] = 0
+                        self.carry[agent] = 1  # carrying a full batch
+                        break
+
+        elif op == 2:  # drop: if in any pantry zone; mark it with my color
+            if self.carry[agent] > 0:
+                for i, name in enumerate(self.pantry_names):
+                    if within_circle(self._body_xy(agent), PANTRIES[name], PANTRY_R):
+                        self.pantry_occ[i] = COLOR_TO_INT[agent]
+                        self.carry[agent] = -1
+                        break
+
+
+    def _grip_xy(self, agent: str) -> np.ndarray:
+        return self._data.site_xpos[self._site_ids[agent]][:2].copy()
+
+    # -------------------- Scoring --------------------
+    def _score_agent(self, owner: str) -> float:
+        owner_int = COLOR_TO_INT[owner]
+        # Reward = number of pantries currently owned by this color
+        return float(np.sum(self.pantry_occ == owner_int))
+
+
+    def _score_both(self) -> tuple[float, float]:
+        return self._score_agent("blue"), self._score_agent("yellow")
+
+    # -------------------- Simple scripted policy --------------------
+    def _scripted_policy(self, agent: str) -> np.ndarray:
+        p = self._body_xy(agent)
+        th = self._body_yaw(agent)
+
+        if self.carry[agent] <= 0:
+            # Go to nearest available pickup
+            candidates = [
+                (i, name, PICKUPS[name]) for i, name in enumerate(self.pickup_names)
+                if self.pickup_occ[i] == 1
+            ]
+            if candidates:
+                i, _, tgt = min(candidates, key=lambda t: np.linalg.norm(t[2] - p))
+                op = 1 if within_circle(p, tgt, PICKUP_R - 0.02) else 0
+            else:
+                tgt = p  # nothing to do
+                op = 0
+        else:
+            # Carrying: go to pantry not owned by me (prefer empty)
+            my_int = COLOR_TO_INT[agent]
+            # Prefer empty, else flip opponent-owned, else stay
+            empty = [(i, name, PANTRIES[name]) for i, name in enumerate(self.pantry_names) if self.pantry_occ[i] == 0]
+            opp_owned = [(i, name, PANTRIES[name]) for i, name in enumerate(self.pantry_names) if self.pantry_occ[i] not in (0, my_int)]
+
+            pool = empty if empty else opp_owned
+            if pool:
+                i, _, tgt = min(pool, key=lambda t: np.linalg.norm(t[2] - p))
+                op = 2 if within_circle(p, tgt, PANTRY_R) else 0
+            else:
+                tgt = p
+                op = 0
+
+        desired = np.arctan2((tgt - p)[1], (tgt - p)[0])
+        w_cmd = np.clip((desired - th + np.pi) % (2 * np.pi) - np.pi, -MAX_ANG_SPEED, MAX_ANG_SPEED)
+
+        return np.array([1.0, w_cmd / MAX_ANG_SPEED, float(op)], dtype=np.float32)
+
