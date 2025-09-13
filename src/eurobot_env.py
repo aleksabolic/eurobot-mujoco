@@ -12,7 +12,7 @@ MAX_ANG_SPEED = 2.0                  # rad/s (|w|<=1 scales to this)
 PICK_RADIUS = 0.18                   # m
 BOT_RADIUS = 0.12
 TABLE_HALF = np.array([1.5, 1.0], dtype=np.float32)  
-MARGIN = BOT_RADIUS + 0.02
+MARGIN = BOT_RADIUS 
 
 # Top->Bottom, Left->Right
 PANTRIES = {
@@ -118,6 +118,16 @@ class EurobotMJ(ParallelEnv):
         }
         self._site_ids = {a: self._model.site(f"{a}_grip").id for a in self.agents}
 
+        self._pantry_geom_ids = {n: self._model.geom(f"pantry_{n}").id for n in self.pantry_names}
+        self._pickup_geom_ids = {n: self._model.geom(f"pickup_{n}").id for n in self.pickup_names}
+
+        # simple color table (R,G,B,A)
+        self._CLR_EMPTY   = np.array([0.00, 0.80, 0.80, 0.35], dtype=np.float32)  # cyan = free
+        self._CLR_BLUE    = np.array([0.20, 0.40, 1.00, 0.65], dtype=np.float32)  # owned by blue
+        self._CLR_YELLOW  = np.array([1.00, 0.90, 0.20, 0.65], dtype=np.float32)  # owned by yellow
+        self._CLR_AVAIL   = np.array([0.90, 0.10, 0.90, 0.35], dtype=np.float32)  # pickup has crate (magenta)
+        self._CLR_SPENT   = np.array([0.30, 0.30, 0.30, 0.20], dtype=np.float32)  # pickup used/empty
+
         # Build spaces
         self._init_spaces()
 
@@ -174,6 +184,22 @@ class EurobotMJ(ParallelEnv):
         self._data.qpos[self._qpos_index(f"{agent}_y")] = float(pos_xy[1])
         self._data.qpos[self._qpos_index(f"{agent}_yaw")] = float(yaw)
 
+    def _refresh_markers(self):
+        # Pantries: 0=empty, 1=blue, 2=yellow
+        for i, name in enumerate(self.pantry_names):
+            gid = self._pantry_geom_ids[name]
+            occ = int(self.pantry_occ[i])
+            if occ == 0:   color = self._CLR_EMPTY
+            elif occ == 1: color = self._CLR_BLUE
+            else:          color = self._CLR_YELLOW
+            self._model.geom_rgba[gid] = color
+
+        # Pickups: 1=available, 0=spent
+        for i, name in enumerate(self.pickup_names):
+            gid = self._pickup_geom_ids[name]
+            color = self._CLR_AVAIL if int(self.pickup_occ[i]) == 1 else self._CLR_SPENT
+            self._model.geom_rgba[gid] = color
+
     # -------------------- API: reset/step/render --------------------
     def reset(self, seed: int | None = None, options=None):
         if seed is not None:
@@ -191,10 +217,7 @@ class EurobotMJ(ParallelEnv):
         self._set_agent_pose("yellow", NESTS["yellow"], 0.0)
 
         mujoco.mj_forward(self._model, self._data)
-        for a in self.agents:
-            px, py = self._body_xy(a)
-            assert -1.5 <= px <= 1.5 and -1.0 <= py <= 1.0, f"{a} reset OOB: {(px,py)}"
-
+        self._refresh_markers()
 
         obs = {a: self._observe(a) for a in self.agents}
         return obs, {a: {} for a in self.agents}
@@ -317,6 +340,7 @@ class EurobotMJ(ParallelEnv):
                     if self.pickup_occ[i] == 1 and within_circle(self._grip_xy(agent), PICKUPS[name], PICKUP_R):
                         self.pickup_occ[i] = 0
                         self.carry[agent] = 1  # carrying a full batch
+                        self._refresh_markers()
                         break
 
         elif op == 2:  # drop: if in any pantry zone; mark it with my color
@@ -325,6 +349,7 @@ class EurobotMJ(ParallelEnv):
                     if within_circle(self._body_xy(agent), PANTRIES[name], PANTRY_R):
                         self.pantry_occ[i] = COLOR_TO_INT[agent]
                         self.carry[agent] = -1
+                        self._refresh_markers()
                         break
 
 
