@@ -5,11 +5,14 @@ import mujoco
 import mujoco.viewer
 
 # -------------------- Constants --------------------
-CTRL_DT = 0.05                       # Control period (20 Hz)
+CTRL_DT = 0.02                       # Control period (50 Hz)
 WORLD_TIMESTEP = None                # If None, uses model.opt.timestep
 MAX_LIN_SPEED = 0.6                  # m/s (|v|<=1 scales to this)
 MAX_ANG_SPEED = 2.0                  # rad/s (|w|<=1 scales to this)
 PICK_RADIUS = 0.18                   # m
+BOT_RADIUS = 0.12
+TABLE_HALF = np.array([1.5, 1.0], dtype=np.float32)  
+MARGIN = BOT_RADIUS + 0.02
 
 # Top->Bottom, Left->Right
 PANTRIES = {
@@ -205,11 +208,7 @@ class EurobotMJ(ParallelEnv):
         self._apply_action("blue", a_blue)
         self._apply_action("yellow", a_yellow)
 
-        # Simulate until CTRL_DT has elapsed (substeps depend on model timestep)
-        substeps = int(CTRL_DT / self._model.opt.timestep)
-        for _ in range(max(1, substeps)):
-            mujoco.mj_step(self._model, self._data)
-
+        mujoco.mj_forward(self._model, self._data)
 
         self._step_count += 1
         self._t += CTRL_DT
@@ -251,7 +250,7 @@ class EurobotMJ(ParallelEnv):
 
         my_xy = self._body_xy(me)
         my_yaw = self._body_yaw(me)
-        carrying = 1.0 if self.carry[me] > 0 else 0.0
+        carrying = 1.0 if self.carry[me] >= 0 else 0.0
 
         opp_xy = self._body_xy(opp)
         opp_yaw = self._body_yaw(opp)
@@ -299,10 +298,17 @@ class EurobotMJ(ParallelEnv):
         dyaw = np.clip(dyaw, -MAX_STEP_YAW, MAX_STEP_YAW)
         target_yaw = th + dyaw
 
-        # Write actuator controls (x, y, yaw)
-        self._data.ctrl[self._act_ids[agent]["x"]] = target_xy[0]
-        self._data.ctrl[self._act_ids[agent]["y"]] = target_xy[1]
-        self._data.ctrl[self._act_ids[agent]["yaw"]] = target_yaw
+        # --- clamp to table with margin ---
+        target_xy = np.clip(target_xy, -TABLE_HALF + MARGIN, TABLE_HALF - MARGIN)
+
+        # wrap yaw to [-pi, pi] (keeps headings sane)
+        target_yaw = ((target_yaw + np.pi) % (2*np.pi)) - np.pi
+
+        # --- write pose kinematically ---
+        self._set_agent_pose(agent, target_xy, target_yaw)
+
+        # forward NOW so site_xpos etc. are fresh for pick/drop tests below
+        mujoco.mj_forward(self._model, self._data)
 
         # Discrete op
         if op == 1:  # pick: if in any pickup zone with occ=1 and not carrying
@@ -370,5 +376,12 @@ class EurobotMJ(ParallelEnv):
         desired = np.arctan2((tgt - p)[1], (tgt - p)[0])
         w_cmd = np.clip((desired - th + np.pi) % (2 * np.pi) - np.pi, -MAX_ANG_SPEED, MAX_ANG_SPEED)
 
+        ang_err = ((np.arctan2((tgt - p)[1], (tgt - p)[0]) - th + np.pi) % (2*np.pi)) - np.pi
+        # mild P gain + deadzone
+        if abs(ang_err) < 0.05:
+            w_cmd = 0.0
+        else:
+            w_cmd = np.clip(0.6 * ang_err, -MAX_ANG_SPEED, MAX_ANG_SPEED)
         return np.array([1.0, w_cmd / MAX_ANG_SPEED, float(op)], dtype=np.float32)
+
 

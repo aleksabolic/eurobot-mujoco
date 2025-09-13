@@ -1,6 +1,7 @@
 import argparse, numpy as np
 from stable_baselines3 import PPO
-from eurobot_env import EurobotMJ
+from eurobot_env import EurobotMJ, CTRL_DT
+import time 
 
 def run(model_path, episodes=5, render=False):
     env = EurobotMJ(xml_path="assets/arena.xml", max_steps=2000, scripted_opponent=True)
@@ -9,14 +10,17 @@ def run(model_path, episodes=5, render=False):
         o, _ = env.reset()
         done = False
         R = 0.0
+        R_y = 0.0
         while not done:
             a, _ = model.predict(o['blue'], deterministic=True)
             o, r, term, trunc, _ = env.step({'blue': a})
             if render:
                 env.render()
+                time.sleep(CTRL_DT)
             R += r['blue']
+            R_y += r['yellow']
             done = term['blue'] or trunc['blue']
-        print(f"Episode {ep+1}: return={R:.2f}")
+        print(f"Episode {ep+1}: return blue={R:.2f} | return yellow={R_y:.2f}")
     if render:
         env.close()
 
