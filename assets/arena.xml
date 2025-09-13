@@ -2,6 +2,7 @@
   <compiler angle="degree" coordinate="local"/>
   <option gravity="0 0 -9.81" timestep="0.002" integrator="RK4"/>
   <size nconmax="200" njmax="2000"/>
+
   <asset>
     <texture name="playmat_tex" type="2d" file="table_bis.png"/>
     <material name="playmat_mat" texture="playmat_tex" rgba="1 1 1 1"/>
@@ -26,165 +27,20 @@
     <geom name="granary" type="box" pos="0.0 0.775 0.027500" size="0.900000 0.225000 0.027500" material="granary_mat" contype="1" conaffinity="1"/>
 
     <!--  Blue robot (cylinder)  -->
-    <body name="blue" pos="1.2 0.8 0.03">
+    <body name="blue" pos="0 0 0.03">
       <geom type="cylinder" size="0.12 0.03" material="matblue" friction="1.0 0.01 0.0001"/>
-      <joint name="blue_x" type="slide" axis="1 0 0"/>
-      <joint name="blue_y" type="slide" axis="0 1 0"/>
+      <joint name="blue_x"   type="slide" axis="1 0 0" range="-1.5 1.5"/>
+      <joint name="blue_y"   type="slide" axis="0 1 0" range="-1.0 1.0"/>
       <joint name="blue_yaw" type="hinge" axis="0 0 1"/>
       <site name="blue_grip" pos="0.13 0 0.03" size="0.005" rgba="0 0 1 1"/>
     </body>
     <!--  Yellow robot (cylinder)  -->
-    <body name="yellow" pos="-1.2 0.8 0.03">
+    <body name="yellow" pos="0 0 0.03">
       <geom type="cylinder" size="0.12 0.03" material="matyellow" friction="1.0 0.01 0.0001"/>
-      <joint name="yellow_x" type="slide" axis="1 0 0"/>
-      <joint name="yellow_y" type="slide" axis="0 1 0"/>
+      <joint name="yellow_x" type="slide" axis="1 0 0" range="-1.5 1.5"/>
+      <joint name="yellow_y" type="slide" axis="0 1 0" range="-1.0 1.0"/>
       <joint name="yellow_yaw" type="hinge" axis="0 0 1"/>
       <site name="yellow_grip" pos="0.13 0 0.03" size="0.005" rgba="1 1 0 1"/>
-    </body>
-
-    <!-- Hazelnut crates -->
-    <!-- Group 1 @ (1100,100) -->
-    <body name="crate_1_0" pos="-0.475 -0.87500 0.017">
-      <freejoint/>
-      <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
-    </body>
-    <body name="crate_1_1" pos="-0.425 -0.87500 0.017">
-      <freejoint/>
-      <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/>
-    </body>
-    <body name="crate_1_2" pos="-0.375 -0.87500 0.017">
-      <freejoint/>
-      <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
-    </body>
-    <body name="crate_1_3" pos="-0.325 -0.87500 0.017">
-      <freejoint/>
-      <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/>
-    </body>
-
-    <!-- Group 2 @ (1900,100) -->
-    <body name="crate_2_0" pos="0.325 -0.87500 0.017">
-      <freejoint/>
-      <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
-    </body>
-    <body name="crate_2_1" pos="0.375 -0.87500 0.017">
-      <freejoint/>
-      <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/>
-    </body>
-    <body name="crate_2_2" pos="0.425 -0.87500 0.017">
-      <freejoint/>
-      <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
-    </body>
-    <body name="crate_2_3" pos="0.475 -0.87500 0.017">
-      <freejoint/>
-      <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/>
-    </body>
-
-    <!-- Group 3 @ (150,400)  -->
-    <body name="crate_3_0" pos="-1.3750 -0.675 0.017">
-      <freejoint/>
-      <geom type="box" size="0.075 0.025 0.015" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/>
-    </body>
-    <body name="crate_3_1" pos="-1.3750 -0.625 0.017">
-      <freejoint/>
-      <geom type="box" size="0.075 0.025 0.015" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
-    </body>
-    <body name="crate_3_2" pos="-1.3750 -0.575 0.017">
-      <freejoint/>
-      <geom type="box" size="0.075 0.025 0.015" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/>
-    </body>
-    <body name="crate_3_3" pos="-1.3750 -0.525 0.017">
-      <freejoint/>
-      <geom type="box" size="0.075 0.025 0.015" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
-    </body>
-
-    <!-- Group 4 @ (2850,400) -->
-    <body name="crate_4_0" pos="1.3750 -0.675 0.017">
-      <freejoint/>
-      <geom type="box" size="0.075 0.025 0.015" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/>
-    </body>
-    <body name="crate_4_1" pos="1.3750 -0.625 0.017">
-      <freejoint/>
-      <geom type="box" size="0.075 0.025 0.015" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
-    </body>
-    <body name="crate_4_2" pos="1.3750 -0.575 0.017">
-      <freejoint/>
-      <geom type="box" size="0.075 0.025 0.015" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/>
-    </body>
-    <body name="crate_4_3" pos="1.3750 -0.525 0.017">
-      <freejoint/>
-      <geom type="box" size="0.075 0.025 0.015" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
-    </body>
-
-    <!-- Group 5 @ (150,1200) -->
-    <body name="crate_5_0" pos="-1.3750 0.125 0.017">
-      <freejoint/>
-      <geom type="box" size="0.075 0.025 0.015" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/>
-    </body>
-    <body name="crate_5_1" pos="-1.3750 0.175 0.017">
-      <freejoint/>
-      <geom type="box" size="0.075 0.025 0.015" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
-    </body>
-    <body name="crate_5_2" pos="-1.3750 0.225 0.017">
-      <freejoint/>
-      <geom type="box" size="0.075 0.025 0.015" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/>
-    </body>
-    <body name="crate_5_3" pos="-1.3750 0.275 0.017">
-      <freejoint/>
-      <geom type="box" size="0.075 0.025 0.015" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
-    </body>
-
-    <!-- Group 6 @ (2850,1200) -->
-    <body name="crate_6_0" pos="1.3750 0.125 0.017">
-      <freejoint/>
-      <geom type="box" size="0.075 0.025 0.015" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/>
-    </body>
-    <body name="crate_6_1" pos="1.3750 0.175 0.017">
-      <freejoint/>
-      <geom type="box" size="0.075 0.025 0.015" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
-    </body>
-    <body name="crate_6_2" pos="1.3750 0.225 0.017">
-      <freejoint/>
-      <geom type="box" size="0.075 0.025 0.015" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/>
-    </body>
-    <body name="crate_6_3" pos="1.3750 0.275 0.017">
-      <freejoint/>
-      <geom type="box" size="0.075 0.025 0.015" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
-    </body>
-
-    <!-- Group 7 @ (1150,800) -->
-    <body name="crate_7_0" pos="-0.425 -0.200 0.017">
-      <freejoint/>
-      <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/>
-    </body>
-    <body name="crate_7_1" pos="-0.375 -0.200 0.017">
-      <freejoint/>
-      <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
-    </body>
-    <body name="crate_7_2" pos="-0.325 -0.200 0.017">
-      <freejoint/>
-      <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/>
-    </body>
-    <body name="crate_7_3" pos="-0.275 -0.200 0.017">
-      <freejoint/>
-      <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
-    </body>
-
-    <!-- Group 8 @ (1850,800) -->
-    <body name="crate_8_0" pos="0.275 -0.200 0.017">
-      <freejoint/>
-      <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/>
-    </body>
-    <body name="crate_8_1" pos="0.325 -0.200 0.017">
-      <freejoint/>
-      <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
-    </body>
-    <body name="crate_8_2" pos="0.375 -0.200 0.017">
-      <freejoint/>
-      <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.0 0.357 0.549 1" friction="1 0.005 0.0001" mass="0.250"/>
-    </body>
-    <body name="crate_8_3" pos="0.425 -0.200 0.017">
-      <freejoint/>
-      <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
     </body>
 
     <!-- Pantry and pickup visuals  -->
@@ -233,14 +89,13 @@
     <site name="nest_yellow_fill" type="box" pos="-1.2  0.8 0.011" size="0.300 0.225 0.001" rgba="1.00 0.90 0.20 0.25"/>
 
   </worldbody>
-  <actuator>
-    <!--  We'll control (v, ω) via position targets on slide + hinge with a small PD loop in Python  -->
-    <position name="blue_x_act" joint="blue_x" kp="20"/>
-    <position name="blue_y_act" joint="blue_y" kp="20"/>
-    <position name="blue_yaw_act" joint="blue_yaw" kp="10"/>
+  <actuator> 
+    <position name="blue_x_act"   joint="blue_x" kp="20.0"/>
+    <position name="blue_y_act"   joint="blue_y" kp="20.0"/>
+    <position name="blue_yaw_act" joint="blue_yaw" kp="10.0"/>
 
-    <position name="yellow_x_act" joint="yellow_x" kp="20"/>
-    <position name="yellow_y_act" joint="yellow_y" kp="20"/>
-    <position name="yellow_yaw_act" joint="yellow_yaw" kp="10"/>
+    <position name="yellow_x_act"   joint="yellow_x" kp="20.0"/>
+    <position name="yellow_y_act"   joint="yellow_y" kp="20.0"/>
+    <position name="yellow_yaw_act" joint="yellow_yaw" kp="10.0"/>
   </actuator>
 </mujoco>

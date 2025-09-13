@@ -123,6 +123,7 @@ class EurobotMJ(ParallelEnv):
         self._step_count = 0
         self.carry = {"blue": -1, "yellow": -1}  # crate index carried or -1
         self.rng = np.random.default_rng()
+        self._viewer = None
 
     # -------------------- Spaces --------------------
     def _init_spaces(self):
@@ -183,8 +184,13 @@ class EurobotMJ(ParallelEnv):
         self.carry = {"blue": -1, "yellow": -1}
 
         # Spawn robots
-        self._set_agent_pose("blue",   np.array([-1.0, -0.5]), 0.0)
-        self._set_agent_pose("yellow", np.array([ 1.0,  0.5]), 0.0)
+        self._set_agent_pose("blue",  NESTS["blue"], 0.0)
+        self._set_agent_pose("yellow", NESTS["yellow"], 0.0)
+
+        mujoco.mj_forward(self._model, self._data)
+        for a in self.agents:
+            px, py = self._body_xy(a)
+            assert -1.5 <= px <= 1.5 and -1.0 <= py <= 1.0, f"{a} reset OOB: {(px,py)}"
 
 
         obs = {a: self._observe(a) for a in self.agents}
@@ -204,6 +210,7 @@ class EurobotMJ(ParallelEnv):
         for _ in range(max(1, substeps)):
             mujoco.mj_step(self._model, self._data)
 
+
         self._step_count += 1
         self._t += CTRL_DT
 
@@ -217,10 +224,18 @@ class EurobotMJ(ParallelEnv):
         return obs, rews, terms, truncs, infos
 
     def render(self):
-        viewer = mujoco.viewer.launch_passive(self._model, self._data)
-        while viewer.is_running():
-            mujoco.mj_step(self._model, self._data)
-            viewer.sync()
+        if self._viewer is None:
+            self._viewer = mujoco.viewer.launch_passive(self._model, self._data)
+        # just draw the current state; DO NOT step physics here
+        self._viewer.sync()
+
+    def close(self):
+        if self._viewer is not None:
+            try:
+                self._viewer.close()
+            except Exception:
+                pass
+            self._viewer = None
 
     # -------------------- Observation --------------------
     def _ego(self, agent: str) -> tuple[np.ndarray, float, float]:
@@ -269,6 +284,21 @@ class EurobotMJ(ParallelEnv):
         target_xy = p + np.array([np.cos(th), np.sin(th)]) * v * CTRL_DT
         target_yaw = th + w * CTRL_DT
 
+        # rate limits per control step (given 0.6 m/s @ 20 Hz => 0.03 m/step)
+        MAX_STEP_XY  = 0.03     # meters
+        MAX_STEP_YAW = 0.15     # radians
+
+        # rate-limit XY
+        delta = target_xy - p
+        n = np.linalg.norm(delta)
+        if n > MAX_STEP_XY:
+            target_xy = p + (delta * (MAX_STEP_XY / (n + 1e-9)))
+
+        # wrap + clamp yaw delta
+        dyaw = ((target_yaw - th + np.pi) % (2*np.pi)) - np.pi
+        dyaw = np.clip(dyaw, -MAX_STEP_YAW, MAX_STEP_YAW)
+        target_yaw = th + dyaw
+
         # Write actuator controls (x, y, yaw)
         self._data.ctrl[self._act_ids[agent]["x"]] = target_xy[0]
         self._data.ctrl[self._act_ids[agent]["y"]] = target_xy[1]
@@ -278,7 +308,7 @@ class EurobotMJ(ParallelEnv):
         if op == 1:  # pick: if in any pickup zone with occ=1 and not carrying
             if self.carry[agent] <= 0:
                 for i, name in enumerate(self.pickup_names):
-                    if self.pickup_occ[i] == 1 and within_circle(self._body_xy(agent), PICKUPS[name], PICKUP_R):
+                    if self.pickup_occ[i] == 1 and within_circle(self._grip_xy(agent), PICKUPS[name], PICKUP_R):
                         self.pickup_occ[i] = 0
                         self.carry[agent] = 1  # carrying a full batch
                         break
@@ -318,7 +348,7 @@ class EurobotMJ(ParallelEnv):
             ]
             if candidates:
                 i, _, tgt = min(candidates, key=lambda t: np.linalg.norm(t[2] - p))
-                op = 1 if within_circle(p, tgt, PICKUP_R - 0.02) else 0
+                op = 1 if within_circle(self._grip_xy(agent), tgt, PICKUP_R) else 0
             else:
                 tgt = p  # nothing to do
                 op = 0

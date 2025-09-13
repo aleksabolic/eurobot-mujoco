@@ -3,7 +3,7 @@ from stable_baselines3 import PPO
 from eurobot_env import EurobotMJ
 
 def run(model_path, episodes=5, render=False):
-    env = EurobotMJ(xml_path="assets/arena.xml", max_steps=1200, scripted_opponent=True)
+    env = EurobotMJ(xml_path="assets/arena.xml", max_steps=2000, scripted_opponent=True)
     model = PPO.load(model_path)
     for ep in range(episodes):
         o, _ = env.reset()
@@ -17,6 +17,8 @@ def run(model_path, episodes=5, render=False):
             R += r['blue']
             done = term['blue'] or trunc['blue']
         print(f"Episode {ep+1}: return={R:.2f}")
+    if render:
+        env.close()
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()

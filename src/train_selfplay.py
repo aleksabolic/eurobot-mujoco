@@ -8,7 +8,7 @@ from eurobot_env import EurobotMJ
 from gymnasium.wrappers import TimeLimit
 from tqdm import tqdm
 
-def make_env(scripted_opponent=True, max_steps=1200):
+def make_env(scripted_opponent=True, max_steps=2000):
     def _thunk():
         env = EurobotMJ(xml_path="assets/arena.xml", max_steps=max_steps, scripted_opponent=scripted_opponent)
         # Wrap as single-agent by exposing only blue's action; yellow controlled inside env
@@ -27,21 +27,6 @@ def make_env(scripted_opponent=True, max_steps=1200):
         return TimeLimit(BlueWrapper(env), max_episode_steps=max_steps)
     return _thunk
 
-class ProgressBarCallback(BaseCallback):
-    def __init__(self, total, initial=0):
-        super().__init__()
-        self.bar = tqdm(total=total, initial=initial, unit="step", smoothing=0.1, leave=False)
-        self._last = 0
-
-    def _on_step(self) -> bool:
-        cur = self.model.num_timesteps
-        self.bar.update(cur - self._last)
-        self._last = cur
-        return True
-
-    def _on_training_end(self) -> None:
-        self.bar.close()
-
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--timesteps", type=int, default=1_000_000)
@@ -54,8 +39,7 @@ if __name__ == "__main__":
     total = 0
     ckpt_path = "runs/ppo_blue_last.zip"
     while total < args.timesteps:
-        cb = ProgressBarCallback(total=args.timesteps, initial=total)
-        model.learn(total_timesteps=100_000, reset_num_timesteps=False, callback=cb)
+        model.learn(total_timesteps=100_000, reset_num_timesteps=False, progress_bar=True)
         total += 100_000
         model.save(ckpt_path)
         print(f"Saved {ckpt_path} at {total} steps")
