@@ -187,6 +187,51 @@
       <geom type="box" size="0.075 0.025 0.015" euler="0 0 90" rgba="0.969 0.71 0.0 1" friction="1 0.005 0.0001" mass="0.250"/>
     </body>
 
+    <!-- Pantry and pickup visuals  -->
+    <body name="markers">
+      <geom name="pantry_A" type="cylinder" pos="-0.25 0.45 0.011" size="0.10 0.001"
+            rgba="0.0 0.8 0.8 0.35" contype="0" conaffinity="0"/>
+      <geom name="pantry_B" type="cylinder" pos=" 0.25 0.45 0.011" size="0.10 0.001"
+            rgba="0.0 0.8 0.8 0.35" contype="0" conaffinity="0"/>
+      <geom name="pantry_C" type="cylinder" pos="-1.4 -0.2 0.011" size="0.10 0.001"
+            rgba="0.0 0.8 0.8 0.35" contype="0" conaffinity="0"/>
+      <geom name="pantry_D" type="cylinder" pos="-0.7 -0.2 0.011" size="0.10 0.001"
+            rgba="0.0 0.8 0.8 0.35" contype="0" conaffinity="0"/>
+      <geom name="pantry_E" type="cylinder" pos=" 0.0 -0.2 0.011" size="0.10 0.001"
+            rgba="0.0 0.8 0.8 0.35" contype="0" conaffinity="0"/>
+      <geom name="pantry_F" type="cylinder" pos=" 0.7 -0.2 0.011" size="0.10 0.001"
+            rgba="0.0 0.8 0.8 0.35" contype="0" conaffinity="0"/>
+      <geom name="pantry_G" type="cylinder" pos=" 1.4 -0.2 0.011" size="0.10 0.001"
+            rgba="0.0 0.8 0.8 0.35" contype="0" conaffinity="0"/>
+      <geom name="pantry_H" type="cylinder" pos="-0.8 -0.9 0.011" size="0.10 0.001"
+            rgba="0.0 0.8 0.8 0.35" contype="0" conaffinity="0"/>
+      <geom name="pantry_I" type="cylinder" pos=" 0.0 -0.9 0.011" size="0.10 0.001"
+            rgba="0.0 0.8 0.8 0.35" contype="0" conaffinity="0"/>
+      <geom name="pantry_J" type="cylinder" pos=" 0.8 -0.9 0.011" size="0.10 0.001"
+            rgba="0.0 0.8 0.8 0.35" contype="0" conaffinity="0"/>
+
+      <geom name="pickup_P1" type="cylinder" pos="-1.375  0.20 0.011" size="0.075 0.001"
+            rgba="0.9 0.1 0.9 0.35" contype="0" conaffinity="0"/>
+      <geom name="pickup_P2" type="cylinder" pos=" 1.375  0.20 0.011" size="0.075 0.001"
+            rgba="0.9 0.1 0.9 0.35" contype="0" conaffinity="0"/>
+      <geom name="pickup_P3" type="cylinder" pos="-0.35 -0.20 0.011" size="0.075 0.001"
+            rgba="0.9 0.1 0.9 0.35" contype="0" conaffinity="0"/>
+      <geom name="pickup_P4" type="cylinder" pos=" 0.35 -0.20 0.011" size="0.075 0.001"
+            rgba="0.9 0.1 0.9 0.35" contype="0" conaffinity="0"/>
+      <geom name="pickup_P5" type="cylinder" pos="-1.375 -0.60 0.011" size="0.075 0.001"
+            rgba="0.9 0.1 0.9 0.35" contype="0" conaffinity="0"/>
+      <geom name="pickup_P6" type="cylinder" pos=" 1.375 -0.60 0.011" size="0.075 0.001"
+            rgba="0.9 0.1 0.9 0.35" contype="0" conaffinity="0"/>
+      <geom name="pickup_P7" type="cylinder" pos="-0.40 -0.875 0.011" size="0.075 0.001"
+            rgba="0.9 0.1 0.9 0.35" contype="0" conaffinity="0"/>
+      <geom name="pickup_P8" type="cylinder" pos=" 0.40 -0.875 0.011" size="0.075 0.001"
+            rgba="0.9 0.1 0.9 0.35" contype="0" conaffinity="0"/>
+    </body>
+
+    <!-- Nest visuals -->
+    <site name="nest_blue_fill"   type="box" pos=" 1.2  0.8 0.011" size="0.300 0.225 0.001" rgba="0.20 0.40 1.00 0.25"/>
+    <site name="nest_yellow_fill" type="box" pos="-1.2  0.8 0.011" size="0.300 0.225 0.001" rgba="1.00 0.90 0.20 0.25"/>
+
   </worldbody>
   <actuator>
     <!--  We'll control (v, ω) via position targets on slide + hinge with a small PD loop in Python  -->

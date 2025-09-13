@@ -28,16 +28,20 @@ PANTRY_R = 0.10
 
 # Top->Bottom, Left->Right
 PICKUPS = {
-    "P1": np.array([-0.30, -0.20]),
-    "P2": np.array([ 0.30, -0.20]),
-    "P3": np.array([-0.30,  0.20]),
-    "P4": np.array([ 0.30,  0.20]),
+    "P1": np.array([-1.375, 0.2]),
+    "P2": np.array([ 1.375, 0.2]),
+    "P3": np.array([-0.35, -0.2]),
+    "P4": np.array([ 0.35, -0.2]),
+    "P5": np.array([-1.375, -0.6]),
+    "P6": np.array([ 1.375, -0.6]),
+    "P7": np.array([-0.4, -0.875]),
+    "P8": np.array([ 0.4, -0.875]),
 }
-PICKUP_R = 0.15 
+PICKUP_R = 0.075 
 
-NESTS = {"blue": np.array([-1.125, -0.7]),
-         "yellow": np.array([ 1.125,  0.7])}
-NEST_HALF_SIZE = np.array([0.225, 0.3])  # half-widths (x,y)
+NESTS = {"blue": np.array([1.2, 0.8]),
+         "yellow": np.array([-1.2,  0.8])}
+NEST_HALF_SIZE = np.array([0.3, 0.225])  # half-widths (x,y)
 
 AGENTS = ["blue", "yellow"]
 ACT_SUFFIXES = ["x_act", "y_act", "yaw_act"]
