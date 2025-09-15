@@ -9,36 +9,36 @@ CTRL_DT = 0.02                       # Control period (50 Hz)
 WORLD_TIMESTEP = None                # If None, uses model.opt.timestep
 MAX_LIN_SPEED = 0.6                  # m/s (|v|<=1 scales to this)
 MAX_ANG_SPEED = 1.2                  # rad/s (|w|<=1 scales to this)
-WHEEL_RADIUS = 0.06   
-AXLE_HALF    = 0.16   
-BASE_Z       = 0.12   
+WHEEL_RADIUS = 0.06   # keep
+AXLE_HALF    = 0.11   # was 0.16
+BASE_Z       = 0.12   # keep  
 CTRL_SUBSTEPS = None
 
 # Top->Bottom, Left->Right
 PANTRIES = {
-    "A": np.array([-0.25, 0.45]),
-    "B": np.array([ 0.25, 0.45]),
-    "C": np.array([-1.4, -0.2]),
-    "D": np.array([-0.7, -0.2]),
-    "E": np.array([ 0.0, -0.2]),
-    "F": np.array([ 0.7, -0.2]),
-    "G": np.array([ 1.4, -0.2]),
-    "H": np.array([-0.8, -0.9]),
-    "I": np.array([ 0.0, -0.9]),
-    "J": np.array([ 0.8, -0.9]),
+    "A": np.array([-0.25,  0.45]),   # unchanged
+    "B": np.array([ 0.25,  0.45]),   # unchanged
+    "C": np.array([-1.32, -0.20]),   # was -1.40
+    "D": np.array([-0.70, -0.20]),
+    "E": np.array([ 0.00, -0.20]),
+    "F": np.array([ 0.70, -0.20]),
+    "G": np.array([ 1.32, -0.20]),   # was  1.40
+    "H": np.array([-0.80, -0.82]),   # was -0.90
+    "I": np.array([ 0.00, -0.82]),   # was -0.90
+    "J": np.array([ 0.80, -0.82]),   # was -0.90
 }
 PANTRY_R = 0.10
 
 # Top->Bottom, Left->Right
 PICKUPS = {
-    "P1": np.array([-1.375, 0.2]),
-    "P2": np.array([ 1.375, 0.2]),
-    "P3": np.array([-0.35, -0.2]),
-    "P4": np.array([ 0.35, -0.2]),
-    "P5": np.array([-1.375, -0.6]),
-    "P6": np.array([ 1.375, -0.6]),
-    "P7": np.array([-0.4, -0.875]),
-    "P8": np.array([ 0.4, -0.875]),
+    "P1": np.array([-1.32,  0.20]),  # was -1.375
+    "P2": np.array([ 1.32,  0.20]),  # was  1.375
+    "P3": np.array([-0.35, -0.20]),
+    "P4": np.array([ 0.35, -0.20]),
+    "P5": np.array([-1.32, -0.60]),  # was -1.375
+    "P6": np.array([ 1.32, -0.60]),  # was  1.375
+    "P7": np.array([-0.40, -0.82]),  # was -0.875
+    "P8": np.array([ 0.40, -0.82]),  # was -0.875
 }
 PICKUP_R = 0.075 
 
@@ -247,13 +247,24 @@ class EurobotMJ(ParallelEnv):
         return obs, {a: {} for a in self.agents}
 
     def step(self, actions: dict[str, np.ndarray]):
-        # Blue from actions, Yellow scripted unless user provides both
+        # Decide both actions first
         a_blue = actions["blue"]
         a_yellow = self._scripted_policy("yellow") if self.scripted_opponent else actions["yellow"]
 
-        # Apply kinematic targets via position actuators
-        self._apply_action("blue", a_blue)
-        self._apply_action("yellow", a_yellow)
+        # Apply controls (no stepping yet)
+        op_b = self._apply_action("blue", a_blue)
+        op_y = self._apply_action("yellow", a_yellow)
+
+        # Advance physics ONCE per env step
+        for _ in range(self._substeps):
+            mujoco.mj_step(self._model, self._data)
+
+        # After integration, resolve pick/drop (fresh poses)
+        self._maybe_pick_or_drop("blue", op_b)
+        self._maybe_pick_or_drop("yellow", op_y)
+
+        # Update visuals
+        self._refresh_markers()
 
         self._step_count += 1
         self._t += CTRL_DT
@@ -316,45 +327,40 @@ class EurobotMJ(ParallelEnv):
         return obs
 
     # -------------------- Actions --------------------
-    def _apply_action(self, agent: str, a: np.ndarray):
+    def _apply_action(self, agent: str, a: np.ndarray) -> int:
         # Parse command
         v = float(np.clip(a[0], -1, 1)) * MAX_LIN_SPEED
         w = float(np.clip(a[1], -1, 1)) * MAX_ANG_SPEED
         op = int(round(np.clip(a[2], 0, 2)))
 
         # Map (v, w) -> wheel angular velocities (rad/s)
-        #   v_left  = (v - w*AXLE_HALF) / WHEEL_RADIUS
-        #   v_right = (v + w*AXLE_HALF) / WHEEL_RADIUS
         v_left  = (v - w * AXLE_HALF) / WHEEL_RADIUS
         v_right = (v + w * AXLE_HALF) / WHEEL_RADIUS
 
-        # Send setpoints to velocity actuators (ctrl = desired wheel speed)
+        # Send setpoints; DO NOT STEP HERE
         aidL = self._wheel_ids[agent]["left"]
         aidR = self._wheel_ids[agent]["right"]
         self._data.ctrl[aidL] = v_left
         self._data.ctrl[aidR] = v_right
+        return op
+    
 
-        # Advance physics for one control period using substeps
-        for _ in range(self._substeps):
-            mujoco.mj_step(self._model, self._data)
-
-        # After integration, we can safely check pick/drop zones (fresh positions)
+    def _maybe_pick_or_drop(self, agent: str, op: int):
         if op == 1:  # pick
-            if self.carry[agent] <= 0:
+            if self.carry[agent] < 0:
+                grip = self._grip_xy(agent)
                 for i, name in enumerate(self.pickup_names):
-                    if self.pickup_occ[i] == 1 and within_circle(self._grip_xy(agent), PICKUPS[name], PICKUP_R):
+                    if self.pickup_occ[i] == 1 and within_circle(grip, PICKUPS[name], PICKUP_R):
                         self.pickup_occ[i] = 0
                         self.carry[agent] = 1
-                        self._refresh_markers()
                         break
-
         elif op == 2:  # drop
             if self.carry[agent] > 0:
+                p = self._body_xy(agent)
                 for i, name in enumerate(self.pantry_names):
-                    if within_circle(self._body_xy(agent), PANTRIES[name], PANTRY_R):
+                    if within_circle(p, PANTRIES[name], PANTRY_R):
                         self.pantry_occ[i] = COLOR_TO_INT[agent]
                         self.carry[agent] = -1
-                        self._refresh_markers()
                         break
 
     def _grip_xy(self, agent: str) -> np.ndarray:
@@ -374,42 +380,32 @@ class EurobotMJ(ParallelEnv):
         p = self._body_xy(agent)
         th = self._body_yaw(agent)
 
-        if self.carry[agent] <= 0:
-            # Go to nearest available pickup
-            candidates = [
-                (i, name, PICKUPS[name]) for i, name in enumerate(self.pickup_names)
-                if self.pickup_occ[i] == 1
-            ]
-            if candidates:
-                i, _, tgt = min(candidates, key=lambda t: np.linalg.norm(t[2] - p))
-                op = 1 if within_circle(self._grip_xy(agent), tgt, PICKUP_R) else 0
-            else:
-                tgt = p  # nothing to do
-                op = 0
+        if self.carry[agent] < 0:
+            # nearest available pickup
+            candidates = [(i, name, PICKUPS[name]) for i, name in enumerate(self.pickup_names) if self.pickup_occ[i] == 1]
+            tgt = min(candidates, key=lambda t: np.linalg.norm(t[2] - p))[2] if candidates else p
+            op = 1 if within_circle(self._grip_xy(agent), tgt, PICKUP_R) else 0
         else:
-            # Carrying: go to pantry not owned by me (prefer empty)
             my_int = COLOR_TO_INT[agent]
-            # Prefer empty, else flip opponent-owned, else stay
-            empty = [(i, name, PANTRIES[name]) for i, name in enumerate(self.pantry_names) if self.pantry_occ[i] == 0]
+            empty     = [(i, name, PANTRIES[name]) for i, name in enumerate(self.pantry_names) if self.pantry_occ[i] == 0]
             opp_owned = [(i, name, PANTRIES[name]) for i, name in enumerate(self.pantry_names) if self.pantry_occ[i] not in (0, my_int)]
-
             pool = empty if empty else opp_owned
-            if pool:
-                i, _, tgt = min(pool, key=lambda t: np.linalg.norm(t[2] - p))
-                op = 2 if within_circle(p, tgt, PANTRY_R) else 0
-            else:
-                tgt = p
-                op = 0
+            tgt = min(pool, key=lambda t: np.linalg.norm(t[2] - p))[2] if pool else p
+            op = 2 if within_circle(p, tgt, PANTRY_R) else 0
 
-        desired = np.arctan2((tgt - p)[1], (tgt - p)[0])
-        w_cmd = np.clip((desired - th + np.pi) % (2 * np.pi) - np.pi, -MAX_ANG_SPEED, MAX_ANG_SPEED)
+        vec = tgt - p
+        dist = float(np.linalg.norm(vec) + 1e-9)
+        desired = float(np.arctan2(vec[1], vec[0]))
+        ang_err = (desired - th + np.pi) % (2*np.pi) - np.pi
 
-        ang_err = ((np.arctan2((tgt - p)[1], (tgt - p)[0]) - th + np.pi) % (2*np.pi)) - np.pi
-        # mild P gain + deadzone
-        if abs(ang_err) < 0.05:
-            w_cmd = 0.0
-        else:
-            w_cmd = np.clip(0.6 * ang_err, -MAX_ANG_SPEED, MAX_ANG_SPEED)
-        return np.array([1.0, w_cmd / MAX_ANG_SPEED, float(op)], dtype=np.float32)
+        # Turn-aggressive, move-conservative controller
+        w_cmd = np.clip(1.8 * ang_err, -MAX_ANG_SPEED, MAX_ANG_SPEED)
+        # reduce forward speed when misaligned or very close to target
+        align_factor = np.clip(1.0 - abs(ang_err)/1.2, 0.1, 1.0)
+        dist_factor  = np.clip(dist / 0.5, 0.0, 1.0)
+        v_scale = float(np.clip(align_factor * dist_factor, 0.0, 1.0))
+
+        return np.array([v_scale, w_cmd / MAX_ANG_SPEED, float(op)], dtype=np.float32)
+
 
 

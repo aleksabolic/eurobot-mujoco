@@ -27,11 +27,12 @@
             <light diffuse=".2 .2 .2" pos="0 0 10" dir="0 0 -1"/>
 
             <!-- Table -->
-            <geom name="table_top" type="box" pos="0 0 0" size="1.500 1.000 0.005" contype="1" conaffinity="1" material="playmat_mat" friction="1 0.005 0.0001"/>
-            <geom name="wall_north" type="box" pos="1.511000 0.000000 0.035000" size="0.011000 1.000000 0.035000" material="border_mat" contype="1" conaffinity="1"/>
-            <geom name="wall_south" type="box" pos="-1.511000 0.000000 0.035000" size="0.011000 1.000000 0.035000" material="border_mat" contype="1" conaffinity="1"/>
-            <geom name="wall_east" type="box" pos="0.000000 1.011000 0.035000" size="1.500000 0.011000 0.035000" material="border_mat" contype="1" conaffinity="1"/>
-            <geom name="wall_west" type="box" pos="0.000000 -1.011000 0.035000" size="1.500000 0.011000 0.035000" material="border_mat" contype="1" conaffinity="1"/>
+            <geom name="table_top" type="box" pos="0 0 0" size="1.500 1.000 0.005" priority="2" material="playmat_mat" contype="1" conaffinity="1" friction="1 0.005 0.0001"/>
+
+            <geom name="wall_north" type="box" pos=" 1.520 0.000 0.070" size="0.020 1.000 0.070" material="border_mat" contype="1" conaffinity="1" friction="0.20 0.002 0.00005" solref="0.002 1" solimp="0.95 0.99 0.001"/>
+            <geom name="wall_south" type="box" pos="-1.520 0.000 0.070" size="0.020 1.000 0.070" material="border_mat" contype="1" conaffinity="1" friction="0.20 0.002 0.00005" solref="0.002 1" solimp="0.95 0.99 0.001"/>
+            <geom name="wall_east" type="box" pos="0.000  1.020 0.070" size="1.500 0.020 0.070" material="border_mat" contype="1" conaffinity="1" friction="0.20 0.002 0.00005" solref="0.002 1" solimp="0.95 0.99 0.001"/>
+            <geom name="wall_west" type="box" pos="0.000 -1.020 0.070" size="1.500 0.020 0.070" material="border_mat" contype="1" conaffinity="1" friction="0.20 0.002 0.00005" solref="0.002 1" solimp="0.95 0.99 0.001"/>
 
             <!-- Granary -->
             <geom name="granary" type="box" pos="0.0 0.775 0.027500" size="0.900000 0.225000 0.027500" material="granary_mat" contype="1" conaffinity="1"/>
@@ -40,77 +41,73 @@
             <body name="blue_base" pos="1.20 0.8 0.12" euler="0 0 -90">
                   <freejoint name="blue_base_free"/>
 
-                  <geom name="blue_chassis" type="cylinder" pos="0 0 -0.02" size="0.14 0.05" density="300" material="matblue" contype="0" conaffinity="0"/>
+                  <geom name="blue_chassis" type="cylinder" pos="0 0 -0.02" size="0.11 0.045" density="300" material="matblue" contype="0" conaffinity="0"/>
 
-                  <!-- dense plate near the wheel axle height; no collisions -->
-                  <geom name="blue_ballast" type="box" pos="0 0 -0.08" size="0.09 0.09 0.01" density="2000" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
+                  <geom name="blue_ballast" type="box" pos="0 0 -0.08" size="0.07 0.07 0.01" density="2000" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
 
-                  <geom name="blue_caster_front" type="sphere" pos="0.12 0 -0.09" size="0.03" rgba="0.35 0.35 0.35 1" friction="0.002 0.00005 0.0001"/>
-                  <geom name="blue_caster_back" type="sphere" pos="-0.12 0 -0.09" size="0.03" rgba="0.35 0.35 0.35 1" friction="0.002 0.00005 0.0001"/>
+                  <geom name="blue_caster_front" type="sphere" pos="0.11 0 -0.09" size="0.03" rgba="0.35 0.35 0.35 1" friction="0.002 0.00005 0.0001"/>
+                  <geom name="blue_caster_back" type="sphere" pos="-0.11 0 -0.09" size="0.03" rgba="0.35 0.35 0.35 1" friction="0.002 0.00005 0.0001"/>
 
-                  <!-- LEFT wheel -->
-                  <body name="blue_left_wheel" pos="0 0.16 -0.06">
+                  <body name="blue_left_wheel" pos="0  0.11 -0.06">
                         <joint name="blue_left_wheel_joint" type="hinge" axis="0 1 0" frictionloss="0.02"/>
                         <geom name="blue_left_tire" type="cylinder" fromto="0 -0.015 0   0 0.015 0" size="0.06" density="500" rgba="0.05 0.05 0.05 1" friction="1.2 0.01 0.002" condim="4"/>
                   </body>
 
-                  <!-- RIGHT wheel -->
-                  <body name="blue_right_wheel" pos="0 -0.16 -0.06">
+                  <body name="blue_right_wheel" pos="0 -0.11 -0.06">
                         <joint name="blue_right_wheel_joint" type="hinge" axis="0 1 0" frictionloss="0.02"/>
                         <geom name="blue_right_tire" type="cylinder" fromto="0 -0.015 0   0 0.015 0" size="0.06" density="500" rgba="0.05 0.05 0.05 1" friction="1.2 0.01 0.002" condim="4"/>
                   </body>
 
-                  <site name="blue_grip"   type="sphere" size="0.005" pos="0.15 0 0"/>
+                  <site name="blue_grip" type="sphere" size="0.005" pos="0.14 0 0"/>
             </body>
 
-            <!-- Yellow robot -->
+            <!-- Yellow robot (smaller) -->
             <body name="yellow_base" pos="-1.20 0.8 0.12" euler="0 0 -90">
                   <freejoint name="yellow_base_free"/>
 
-                  <geom name="yellow_chassis" type="cylinder" pos="0 0 -0.02" size="0.14 0.05" density="300" material="matyellow" contype="0" conaffinity="0"/>
+                  <geom name="yellow_chassis" type="cylinder" pos="0 0 -0.02" size="0.11 0.045" density="300" material="matyellow" contype="0" conaffinity="0"/>
 
-                  <!-- dense plate near the wheel axle height; no collisions -->
-                  <geom name="yellow_ballast" type="box" pos="0 0 -0.08" size="0.09 0.09 0.01" density="2000" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
+                  <geom name="yellow_ballast" type="box" pos="0 0 -0.08" size="0.07 0.07 0.01" density="2000" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
 
-                  <geom name="yellow_caster_front" type="sphere" pos="0.12 0 -0.09" size="0.03" rgba="0.35 0.35 0.35 1" friction="0.002 0.00005 0.0001"/>
-                  <geom name="yellow_caster_back" type="sphere" pos="-0.12 0 -0.09" size="0.03" rgba="0.35 0.35 0.35 1" friction="0.002 0.00005 0.0001"/>
+                  <geom name="yellow_caster_front" type="sphere" pos="0.11 0 -0.09" size="0.03" rgba="0.35 0.35 0.35 1" friction="0.002 0.00005 0.0001"/>
+                  <geom name="yellow_caster_back" type="sphere" pos="-0.11 0 -0.09" size="0.03" rgba="0.35 0.35 0.35 1" friction="0.002 0.00005 0.0001"/>
 
-                  <!-- LEFT wheel -->
-                  <body name="yellow_left_wheel" pos="0 0.16 -0.06">
+                  <body name="yellow_left_wheel" pos="0  0.11 -0.06">
                         <joint name="yellow_left_wheel_joint" type="hinge" axis="0 1 0" frictionloss="0.02"/>
                         <geom name="yellow_left_tire" type="cylinder" fromto="0 -0.015 0   0 0.015 0" size="0.06" density="500" rgba="0.05 0.05 0.05 1" friction="1.2 0.01 0.002" condim="4"/>
                   </body>
 
-                  <!-- RIGHT wheel -->
-                  <body name="yellow_right_wheel" pos="0 -0.16 -0.06">
+                  <body name="yellow_right_wheel" pos="0 -0.11 -0.06">
                         <joint name="yellow_right_wheel_joint" type="hinge" axis="0 1 0" frictionloss="0.02"/>
                         <geom name="yellow_right_tire" type="cylinder" fromto="0 -0.015 0   0 0.015 0" size="0.06" density="500" rgba="0.05 0.05 0.05 1" friction="1.2 0.01 0.002" condim="4"/>
                   </body>
 
-                  <site name="yellow_grip" type="sphere" size="0.005" pos="0.15 0 0"/>
+                  <site name="yellow_grip" type="sphere" size="0.005" pos="0.14 0 0"/>
             </body>
 
-            <!-- Pantry and pickup visuals -->
+            <!-- Pantry and pickup visuals (moved inward from rails) -->
             <body name="markers">
-                  <geom name="pantry_A" type="cylinder" pos="-0.25 0.45 0.011" size="0.10 0.001" rgba="0.0 0.8 0.8 0.35" contype="0" conaffinity="0"/>
-                  <geom name="pantry_B" type="cylinder" pos=" 0.25 0.45 0.011" size="0.10 0.001" rgba="0.0 0.8 0.8 0.35" contype="0" conaffinity="0"/>
-                  <geom name="pantry_C" type="cylinder" pos="-1.4 -0.2 0.011" size="0.10 0.001" rgba="0.0 0.8 0.8 0.35" contype="0" conaffinity="0"/>
-                  <geom name="pantry_D" type="cylinder" pos="-0.7 -0.2 0.011" size="0.10 0.001" rgba="0.0 0.8 0.8 0.35" contype="0" conaffinity="0"/>
-                  <geom name="pantry_E" type="cylinder" pos=" 0.0 -0.2 0.011" size="0.10 0.001" rgba="0.0 0.8 0.8 0.35" contype="0" conaffinity="0"/>
-                  <geom name="pantry_F" type="cylinder" pos=" 0.7 -0.2 0.011" size="0.10 0.001" rgba="0.0 0.8 0.8 0.35" contype="0" conaffinity="0"/>
-                  <geom name="pantry_G" type="cylinder" pos=" 1.4 -0.2 0.011" size="0.10 0.001" rgba="0.0 0.8 0.8 0.35" contype="0" conaffinity="0"/>
-                  <geom name="pantry_H" type="cylinder" pos="-0.8 -0.9 0.011" size="0.10 0.001" rgba="0.0 0.8 0.8 0.35" contype="0" conaffinity="0"/>
-                  <geom name="pantry_I" type="cylinder" pos=" 0.0 -0.9 0.011" size="0.10 0.001" rgba="0.0 0.8 0.8 0.35" contype="0" conaffinity="0"/>
-                  <geom name="pantry_J" type="cylinder" pos=" 0.8 -0.9 0.011" size="0.10 0.001" rgba="0.0 0.8 0.8 0.35" contype="0" conaffinity="0"/>
+                  <!-- Pantries -->
+                  <geom name="pantry_A" type="cylinder" pos="-0.25  0.45 0.011" size="0.10 0.001" rgba="0.0 0.8 0.8 0.35" contype="0" conaffinity="0"/>
+                  <geom name="pantry_B" type="cylinder" pos=" 0.25  0.45 0.011" size="0.10 0.001" rgba="0.0 0.8 0.8 0.35" contype="0" conaffinity="0"/>
+                  <geom name="pantry_C" type="cylinder" pos="-1.32 -0.20 0.011" size="0.10 0.001" rgba="0.0 0.8 0.8 0.35" contype="0" conaffinity="0"/>
+                  <geom name="pantry_D" type="cylinder" pos="-0.70 -0.20 0.011" size="0.10 0.001" rgba="0.0 0.8 0.8 0.35" contype="0" conaffinity="0"/>
+                  <geom name="pantry_E" type="cylinder" pos=" 0.00 -0.20 0.011" size="0.10 0.001" rgba="0.0 0.8 0.8 0.35" contype="0" conaffinity="0"/>
+                  <geom name="pantry_F" type="cylinder" pos=" 0.70 -0.20 0.011" size="0.10 0.001" rgba="0.0 0.8 0.8 0.35" contype="0" conaffinity="0"/>
+                  <geom name="pantry_G" type="cylinder" pos=" 1.32 -0.20 0.011" size="0.10 0.001" rgba="0.0 0.8 0.8 0.35" contype="0" conaffinity="0"/>
+                  <geom name="pantry_H" type="cylinder" pos="-0.80 -0.82 0.011" size="0.10 0.001" rgba="0.0 0.8 0.8 0.35" contype="0" conaffinity="0"/>
+                  <geom name="pantry_I" type="cylinder" pos=" 0.00 -0.82 0.011" size="0.10 0.001" rgba="0.0 0.8 0.8 0.35" contype="0" conaffinity="0"/>
+                  <geom name="pantry_J" type="cylinder" pos=" 0.80 -0.82 0.011" size="0.10 0.001" rgba="0.0 0.8 0.8 0.35" contype="0" conaffinity="0"/>
 
-                  <geom name="pickup_P1" type="cylinder" pos="-1.375  0.20 0.011" size="0.075 0.001" rgba="0.9 0.1 0.9 0.35" contype="0" conaffinity="0"/>
-                  <geom name="pickup_P2" type="cylinder" pos=" 1.375  0.20 0.011" size="0.075 0.001" rgba="0.9 0.1 0.9 0.35" contype="0" conaffinity="0"/>
+                  <!-- Pickups -->
+                  <geom name="pickup_P1" type="cylinder" pos="-1.32  0.20 0.011" size="0.075 0.001" rgba="0.9 0.1 0.9 0.35" contype="0" conaffinity="0"/>
+                  <geom name="pickup_P2" type="cylinder" pos=" 1.32  0.20 0.011" size="0.075 0.001" rgba="0.9 0.1 0.9 0.35" contype="0" conaffinity="0"/>
                   <geom name="pickup_P3" type="cylinder" pos="-0.35 -0.20 0.011" size="0.075 0.001" rgba="0.9 0.1 0.9 0.35" contype="0" conaffinity="0"/>
                   <geom name="pickup_P4" type="cylinder" pos=" 0.35 -0.20 0.011" size="0.075 0.001" rgba="0.9 0.1 0.9 0.35" contype="0" conaffinity="0"/>
-                  <geom name="pickup_P5" type="cylinder" pos="-1.375 -0.60 0.011" size="0.075 0.001" rgba="0.9 0.1 0.9 0.35" contype="0" conaffinity="0"/>
-                  <geom name="pickup_P6" type="cylinder" pos=" 1.375 -0.60 0.011" size="0.075 0.001" rgba="0.9 0.1 0.9 0.35" contype="0" conaffinity="0"/>
-                  <geom name="pickup_P7" type="cylinder" pos="-0.40 -0.875 0.011" size="0.075 0.001" rgba="0.9 0.1 0.9 0.35" contype="0" conaffinity="0"/>
-                  <geom name="pickup_P8" type="cylinder" pos=" 0.40 -0.875 0.011" size="0.075 0.001" rgba="0.9 0.1 0.9 0.35" contype="0" conaffinity="0"/>
+                  <geom name="pickup_P5" type="cylinder" pos="-1.32 -0.60 0.011" size="0.075 0.001" rgba="0.9 0.1 0.9 0.35" contype="0" conaffinity="0"/>
+                  <geom name="pickup_P6" type="cylinder" pos=" 1.32 -0.60 0.011" size="0.075 0.001" rgba="0.9 0.1 0.9 0.35" contype="0" conaffinity="0"/>
+                  <geom name="pickup_P7" type="cylinder" pos="-0.40 -0.82 0.011" size="0.075 0.001" rgba="0.9 0.1 0.9 0.35" contype="0" conaffinity="0"/>
+                  <geom name="pickup_P8" type="cylinder" pos=" 0.40 -0.82 0.011" size="0.075 0.001" rgba="0.9 0.1 0.9 0.35" contype="0" conaffinity="0"/>
             </body>
 
             <!-- Nest visuals -->
@@ -119,11 +116,14 @@
       </worldbody>
 
       <actuator>
-            <velocity name="blue_left_speed" joint="blue_left_wheel_joint" kv="20" forcerange="-2 2"/>
-            <velocity name="blue_right_speed" joint="blue_right_wheel_joint" kv="20" forcerange="-2 2" gear="1"/>
+            <!-- Blue -->
+            <velocity name="blue_left_speed" joint="blue_left_wheel_joint" kv="40" ctrlrange="-20 20" forcerange="-8 8"/>
+            <velocity name="blue_right_speed" joint="blue_right_wheel_joint" kv="40" ctrlrange="-20 20" forcerange="-8 8"/>
 
-            <velocity name="yellow_left_speed" joint="yellow_left_wheel_joint" kv="20" forcerange="-2 2"/>
-            <velocity name="yellow_right_speed" joint="yellow_right_wheel_joint" kv="20" forcerange="-2 2" gear="1"/>
+            <!-- Yellow -->
+            <velocity name="yellow_left_speed" joint="yellow_left_wheel_joint" kv="40" ctrlrange="-20 20" forcerange="-8 8"/>
+            <velocity name="yellow_right_speed" joint="yellow_right_wheel_joint" kv="40" ctrlrange="-20 20" forcerange="-8 8"/>
       </actuator>
+
 
 </mujoco>
