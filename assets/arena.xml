@@ -17,20 +17,14 @@
       </asset>
 
       <default>
-            <!-- contact softness & baseline friction -->
             <geom friction="1.0 0.01 0.002" solimp="0.9 0.95 0.001" solref="0.004 1"/>
-
-            <!-- wheel hinge dynamics -->
             <joint damping="0.10" armature="0.003"/>
-
-            <!-- velocity servos: rad/s command, with torque limit -->
             <velocity kv="20" ctrllimited="true" ctrlrange="-10 10" forcerange="-2 2"/>
       </default>
 
 
       <worldbody>
             <light diffuse=".5 .5 .5" pos="0 0 3" dir="0 0 -1"/>
-            <!-- <geom type="plane" size="5 5 0.1" rgba=".9 .9 .9 1" friction="1 0.01 0.001" solimp="0.9 0.95 0.001" solref="0.01 1"/> -->
 
             <!-- Table -->
             <geom name="table_top" type="box" pos="0 0 0" size="1.500 1.000 0.005" contype="1" conaffinity="1" material="playmat_mat" friction="1 0.005 0.0001"/>
@@ -42,31 +36,53 @@
             <!-- Granary -->
             <geom name="granary" type="box" pos="0.0 0.775 0.027500" size="0.900000 0.225000 0.027500" material="granary_mat" contype="1" conaffinity="1"/>
 
-            <body name="base" pos="-1.20 0.8 0.12" euler="0 0 -90">
-                  <freejoint name="base_free"/>
+            <!-- Blue robot -->
+            <body name="blue_base" pos="1.20 0.8 0.12" euler="0 0 -90">
+                  <freejoint name="blue_base_free"/>
 
-                  <!-- circular chassis (no collision), center slightly lower to drop CoM -->
-                  <geom name="chassis" type="cylinder" pos="0 0 -0.02" size="0.14 0.05" density="300" rgba="0.2 0.2 0.25 1" contype="0" conaffinity="0"/>
+                  <geom name="blue_chassis" type="cylinder" pos="0 0 -0.02" size="0.14 0.05" density="300" material="matblue" contype="0" conaffinity="0"/>
 
                   <!-- dense plate near the wheel axle height; no collisions -->
-                  <geom name="ballast" type="box" pos="0 0 -0.08" size="0.09 0.09 0.01" density="2000" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
+                  <geom name="blue_ballast" type="box" pos="0 0 -0.08" size="0.09 0.09 0.01" density="2000" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
 
-
-                  <!-- front & rear casters touching the ground -->
-                  <geom name="caster_front" type="sphere" pos="0.12 0 -0.09" size="0.03" rgba="0.35 0.35 0.35 1" friction="0.002 0.00005 0.0001"/>
-                  <geom name="caster_back" type="sphere" pos="-0.12 0 -0.09" size="0.03" rgba="0.35 0.35 0.35 1" friction="0.002 0.00005 0.0001"/>
-
+                  <geom name="blue_caster_front" type="sphere" pos="0.12 0 -0.09" size="0.03" rgba="0.35 0.35 0.35 1" friction="0.002 0.00005 0.0001"/>
+                  <geom name="blue_caster_back" type="sphere" pos="-0.12 0 -0.09" size="0.03" rgba="0.35 0.35 0.35 1" friction="0.002 0.00005 0.0001"/>
 
                   <!-- LEFT wheel -->
-                  <body name="left_wheel" pos="0 0.16 -0.06">
-                        <joint name="left_wheel_joint" type="hinge" axis="0 1 0" frictionloss="0.02"/>
-                        <geom name="left_tire" type="cylinder" fromto="0 -0.015 0   0 0.015 0" size="0.06" density="500" rgba="0.05 0.05 0.05 1" friction="1.2 0.01 0.002" condim="4"/>
+                  <body name="blue_left_wheel" pos="0 0.16 -0.06">
+                        <joint name="blue_left_wheel_joint" type="hinge" axis="0 1 0" frictionloss="0.02"/>
+                        <geom name="blue_left_tire" type="cylinder" fromto="0 -0.015 0   0 0.015 0" size="0.06" density="500" rgba="0.05 0.05 0.05 1" friction="1.2 0.01 0.002" condim="4"/>
                   </body>
 
                   <!-- RIGHT wheel -->
-                  <body name="right_wheel" pos="0 -0.16 -0.06">
-                        <joint name="right_wheel_joint" type="hinge" axis="0 1 0" frictionloss="0.02"/>
-                        <geom name="right_tire" type="cylinder" fromto="0 -0.015 0   0 0.015 0" size="0.06" density="500" rgba="0.05 0.05 0.05 1" friction="1.2 0.01 0.002" condim="4"/>
+                  <body name="blue_right_wheel" pos="0 -0.16 -0.06">
+                        <joint name="blue_right_wheel_joint" type="hinge" axis="0 1 0" frictionloss="0.02"/>
+                        <geom name="blue_right_tire" type="cylinder" fromto="0 -0.015 0   0 0.015 0" size="0.06" density="500" rgba="0.05 0.05 0.05 1" friction="1.2 0.01 0.002" condim="4"/>
+                  </body>
+            </body>
+
+            <!-- Yellow robot -->
+            <body name="yellow_base" pos="-1.20 0.8 0.12" euler="0 0 -90">
+                  <freejoint name="yellow_base_free"/>
+
+                  <geom name="yellow_chassis" type="cylinder" pos="0 0 -0.02" size="0.14 0.05" density="300" material="matyellow" contype="0" conaffinity="0"/>
+
+                  <!-- dense plate near the wheel axle height; no collisions -->
+                  <geom name="yellow_ballast" type="box" pos="0 0 -0.08" size="0.09 0.09 0.01" density="2000" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
+
+                  <geom name="yellow_caster_front" type="sphere" pos="0.12 0 -0.09" size="0.03" rgba="0.35 0.35 0.35 1" friction="0.002 0.00005 0.0001"/>
+                  <geom name="yellow_caster_back" type="sphere" pos="-0.12 0 -0.09" size="0.03" rgba="0.35 0.35 0.35 1" friction="0.002 0.00005 0.0001"/>
+
+                  <!-- LEFT wheel -->
+                  <body name="yellow_left_wheel" pos="0 0.16 -0.06">
+                        <joint name="yellow_left_wheel_joint" type="hinge" axis="0 1 0" frictionloss="0.02"/>
+                        <geom name="yellow_left_tire" type="cylinder" fromto="0 -0.015 0   0 0.015 0" size="0.06" density="500" rgba="0.05 0.05 0.05 1" friction="1.2 0.01 0.002" condim="4"/>
+                  </body>
+
+                  <!-- RIGHT wheel -->
+                  <body name="yellow_right_wheel" pos="0 -0.16 -0.06">
+                        <joint name="yellow_right_wheel_joint" type="hinge" axis="0 1 0" frictionloss="0.02"/>
+                        <geom name="yellow_right_tire" type="cylinder" fromto="0 -0.015 0   0 0.015 0" size="0.06" density="500" rgba="0.05 0.05 0.05 1" friction="1.2 0.01 0.002" condim="4"/>
                   </body>
             </body>
 
@@ -99,8 +115,11 @@
       </worldbody>
 
       <actuator>
-            <velocity name="left_speed" joint="left_wheel_joint" kv="20" forcerange="-2 2"/>
-            <velocity name="right_speed" joint="right_wheel_joint" kv="20" forcerange="-2 2" gear="1"/>
+            <velocity name="blue_left_speed" joint="blue_left_wheel_joint" kv="20" forcerange="-2 2"/>
+            <velocity name="blue_right_speed" joint="blue_right_wheel_joint" kv="20" forcerange="-2 2" gear="1"/>
+
+            <velocity name="yellow_left_speed" joint="yellow_left_wheel_joint" kv="20" forcerange="-2 2"/>
+            <velocity name="yellow_right_speed" joint="yellow_right_wheel_joint" kv="20" forcerange="-2 2" gear="1"/>
       </actuator>
 
 </mujoco>
