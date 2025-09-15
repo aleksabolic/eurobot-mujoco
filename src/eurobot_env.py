@@ -13,6 +13,9 @@ PICK_RADIUS = 0.18                   # m
 BOT_RADIUS = 0.12
 TABLE_HALF = np.array([1.5, 1.0], dtype=np.float32)  
 MARGIN = BOT_RADIUS 
+WHEEL_RADIUS = 0.03 
+AXLE_HALF    = 0.17 
+CTRL_SUBSTEPS = None
 
 # Top->Bottom, Left->Right
 PANTRIES = {
@@ -108,14 +111,17 @@ class EurobotMJ(ParallelEnv):
             self._model.opt.timestep = float(WORLD_TIMESTEP)
         self._data = mujoco.MjData(self._model)
 
-        # Cache name->id where helpful
-        self._act_ids = {
+        # Wheel motor actuator ids
+        self._wheel_ids = {
             a: {
-                "x": self._model.actuator(f"{a}_x_act").id,
-                "y": self._model.actuator(f"{a}_y_act").id,
-                "yaw": self._model.actuator(f"{a}_yaw_act").id,
+                "left":  self._model.actuator(f"{a}_left_motor").id,
+                "right": self._model.actuator(f"{a}_right_motor").id,
             } for a in self.agents
         }
+
+        # Suggested integration substeps per control step
+        self._substeps = CTRL_SUBSTEPS or max(1, int(CTRL_DT / self._model.opt.timestep + 1e-9))
+
         self._site_ids = {a: self._model.site(f"{a}_grip").id for a in self.agents}
 
         self._pantry_geom_ids = {n: self._model.geom(f"pantry_{n}").id for n in self.pantry_names}
@@ -180,9 +186,21 @@ class EurobotMJ(ParallelEnv):
         self._data.qpos[self._model.jnt_qposadr[adr + 2]] = float(yaw)
 
     def _set_agent_pose(self, agent: str, pos_xy: np.ndarray, yaw: float):
-        self._data.qpos[self._qpos_index(f"{agent}_x")] = float(pos_xy[0])
-        self._data.qpos[self._qpos_index(f"{agent}_y")] = float(pos_xy[1])
-        self._data.qpos[self._qpos_index(f"{agent}_yaw")] = float(yaw)
+        # freejoint qpos: [x y z qw qx qy qz]
+        jid = self._model.joint(f"{agent}_free").id
+        adr = self._model.jnt_qposadr[jid]
+        z = 0.035  # chassis height in XML; keep wheels in contact
+        # yaw -> quaternion (z-rotation)
+        cy, sy = np.cos(yaw * 0.5), np.sin(yaw * 0.5)
+        qw, qx, qy, qz = cy, 0.0, 0.0, sy
+        self._data.qpos[adr+0] = pos_xy[0]
+        self._data.qpos[adr+1] = pos_xy[1]
+        self._data.qpos[adr+2] = z
+        self._data.qpos[adr+3] = qw
+        self._data.qpos[adr+4] = qx
+        self._data.qpos[adr+5] = qy
+        self._data.qpos[adr+6] = qz
+
 
     def _refresh_markers(self):
         # Pantries: 0=empty, 1=blue, 2=yellow
@@ -230,8 +248,6 @@ class EurobotMJ(ParallelEnv):
         # Apply kinematic targets via position actuators
         self._apply_action("blue", a_blue)
         self._apply_action("yellow", a_yellow)
-
-        mujoco.mj_forward(self._model, self._data)
 
         self._step_count += 1
         self._t += CTRL_DT
@@ -296,54 +312,38 @@ class EurobotMJ(ParallelEnv):
 
     # -------------------- Actions --------------------
     def _apply_action(self, agent: str, a: np.ndarray):
+        # Parse command
         v = float(np.clip(a[0], -1, 1)) * MAX_LIN_SPEED
         w = float(np.clip(a[1], -1, 1)) * MAX_ANG_SPEED
         op = int(round(np.clip(a[2], 0, 2)))
 
-        # Kinematic target (project forward one CTRL_DT)
-        p = self._body_xy(agent)
-        th = self._body_yaw(agent)
-        target_xy = p + np.array([np.cos(th), np.sin(th)]) * v * CTRL_DT
-        target_yaw = th + w * CTRL_DT
+        # Map (v, w) -> wheel angular velocities (rad/s)
+        #   v_left  = (v - w*AXLE_HALF) / WHEEL_RADIUS
+        #   v_right = (v + w*AXLE_HALF) / WHEEL_RADIUS
+        v_left  = (v - w * AXLE_HALF) / WHEEL_RADIUS
+        v_right = (v + w * AXLE_HALF) / WHEEL_RADIUS
 
-        # rate limits per control step (given 0.6 m/s @ 20 Hz => 0.03 m/step)
-        MAX_STEP_XY  = 0.03     # meters
-        MAX_STEP_YAW = 0.15     # radians
+        # Send setpoints to velocity actuators (ctrl = desired wheel speed)
+        aidL = self._wheel_ids[agent]["left"]
+        aidR = self._wheel_ids[agent]["right"]
+        self._data.ctrl[aidL] = v_left
+        self._data.ctrl[aidR] = v_right
 
-        # rate-limit XY
-        delta = target_xy - p
-        n = np.linalg.norm(delta)
-        if n > MAX_STEP_XY:
-            target_xy = p + (delta * (MAX_STEP_XY / (n + 1e-9)))
+        # Advance physics for one control period using substeps
+        for _ in range(self._substeps):
+            mujoco.mj_step(self._model, self._data)
 
-        # wrap + clamp yaw delta
-        dyaw = ((target_yaw - th + np.pi) % (2*np.pi)) - np.pi
-        dyaw = np.clip(dyaw, -MAX_STEP_YAW, MAX_STEP_YAW)
-        target_yaw = th + dyaw
-
-        # --- clamp to table with margin ---
-        target_xy = np.clip(target_xy, -TABLE_HALF + MARGIN, TABLE_HALF - MARGIN)
-
-        # wrap yaw to [-pi, pi] (keeps headings sane)
-        target_yaw = ((target_yaw + np.pi) % (2*np.pi)) - np.pi
-
-        # --- write pose kinematically ---
-        self._set_agent_pose(agent, target_xy, target_yaw)
-
-        # forward NOW so site_xpos etc. are fresh for pick/drop tests below
-        mujoco.mj_forward(self._model, self._data)
-
-        # Discrete op
-        if op == 1:  # pick: if in any pickup zone with occ=1 and not carrying
+        # After integration, we can safely check pick/drop zones (fresh positions)
+        if op == 1:  # pick
             if self.carry[agent] <= 0:
                 for i, name in enumerate(self.pickup_names):
                     if self.pickup_occ[i] == 1 and within_circle(self._grip_xy(agent), PICKUPS[name], PICKUP_R):
                         self.pickup_occ[i] = 0
-                        self.carry[agent] = 1  # carrying a full batch
+                        self.carry[agent] = 1
                         self._refresh_markers()
                         break
 
-        elif op == 2:  # drop: if in any pantry zone; mark it with my color
+        elif op == 2:  # drop
             if self.carry[agent] > 0:
                 for i, name in enumerate(self.pantry_names):
                     if within_circle(self._body_xy(agent), PANTRIES[name], PANTRY_R):
@@ -351,6 +351,7 @@ class EurobotMJ(ParallelEnv):
                         self.carry[agent] = -1
                         self._refresh_markers()
                         break
+
 
 
     def _grip_xy(self, agent: str) -> np.ndarray:
