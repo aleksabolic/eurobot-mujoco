@@ -8,13 +8,10 @@ import mujoco.viewer
 CTRL_DT = 0.02                       # Control period (50 Hz)
 WORLD_TIMESTEP = None                # If None, uses model.opt.timestep
 MAX_LIN_SPEED = 0.6                  # m/s (|v|<=1 scales to this)
-MAX_ANG_SPEED = 2.0                  # rad/s (|w|<=1 scales to this)
-PICK_RADIUS = 0.18                   # m
-BOT_RADIUS = 0.12
-TABLE_HALF = np.array([1.5, 1.0], dtype=np.float32)  
-MARGIN = BOT_RADIUS 
-WHEEL_RADIUS = 0.03 
-AXLE_HALF    = 0.17 
+MAX_ANG_SPEED = 1.2                  # rad/s (|w|<=1 scales to this)
+WHEEL_RADIUS = 0.06   
+AXLE_HALF    = 0.16   
+BASE_Z       = 0.12   
 CTRL_SUBSTEPS = None
 
 # Top->Bottom, Left->Right
@@ -50,7 +47,6 @@ NESTS = {"blue": np.array([1.2, 0.8]),
 NEST_HALF_SIZE = np.array([0.3, 0.225])  # half-widths (x,y)
 
 AGENTS = ["blue", "yellow"]
-ACT_SUFFIXES = ["x_act", "y_act", "yaw_act"]
 
 COLOR_TO_INT = {"blue": 1, "yellow": 2}
 INT_TO_COLOR = {1: "blue", 2: "yellow"}
@@ -111,18 +107,29 @@ class EurobotMJ(ParallelEnv):
             self._model.opt.timestep = float(WORLD_TIMESTEP)
         self._data = mujoco.MjData(self._model)
 
+
+        self._BODY = {"blue": "blue_base", "yellow": "yellow_base"}
+        self._FREE = {"blue": "blue_base_free", "yellow": "yellow_base_free"}
+        self._ACT  = {
+            "blue":   {"left": "blue_left_speed",   "right": "blue_right_speed"},
+            "yellow": {"left": "yellow_left_speed", "right": "yellow_right_speed"},
+        }
+        self._SITE = {"blue": "blue_grip", "yellow": "yellow_grip"}
+
+
         # Wheel motor actuator ids
         self._wheel_ids = {
             a: {
-                "left":  self._model.actuator(f"{a}_left_motor").id,
-                "right": self._model.actuator(f"{a}_right_motor").id,
+                "left":  self._model.actuator(self._ACT[a]["left"]).id,
+                "right": self._model.actuator(self._ACT[a]["right"]).id,
             } for a in self.agents
         }
+
 
         # Suggested integration substeps per control step
         self._substeps = CTRL_SUBSTEPS or max(1, int(CTRL_DT / self._model.opt.timestep + 1e-9))
 
-        self._site_ids = {a: self._model.site(f"{a}_grip").id for a in self.agents}
+        self._site_ids = {a: self._model.site(self._SITE[a]).id for a in self.agents}
 
         self._pantry_geom_ids = {n: self._model.geom(f"pantry_{n}").id for n in self.pantry_names}
         self._pickup_geom_ids = {n: self._model.geom(f"pickup_{n}").id for n in self.pickup_names}
@@ -168,12 +175,12 @@ class EurobotMJ(ParallelEnv):
         j = self._model.joint(joint_name).id
         return self._model.jnt_qposadr[j]
 
-    def _body_xy(self, body_name: str) -> np.ndarray:
-        bid = self._model.body(body_name).id
+    def _body_xy(self, agent: str) -> np.ndarray:
+        bid = self._model.body(self._BODY[agent]).id
         return self._data.xpos[bid][:2].copy()
 
-    def _body_yaw(self, body_name: str) -> float:
-        bid = self._model.body(body_name).id
+    def _body_yaw(self, agent: str) -> float:
+        bid = self._model.body(self._BODY[agent]).id
         m = self._data.xmat[bid].reshape(3, 3)
         return float(np.arctan2(m[1, 0], m[0, 0]))
 
@@ -187,9 +194,9 @@ class EurobotMJ(ParallelEnv):
 
     def _set_agent_pose(self, agent: str, pos_xy: np.ndarray, yaw: float):
         # freejoint qpos: [x y z qw qx qy qz]
-        jid = self._model.joint(f"{agent}_free").id
+        jid = self._model.joint(self._FREE[agent]).id
         adr = self._model.jnt_qposadr[jid]
-        z = 0.035  # chassis height in XML; keep wheels in contact
+        z = BASE_Z
         # yaw -> quaternion (z-rotation)
         cy, sy = np.cos(yaw * 0.5), np.sin(yaw * 0.5)
         qw, qx, qy, qz = cy, 0.0, 0.0, sy
@@ -200,7 +207,6 @@ class EurobotMJ(ParallelEnv):
         self._data.qpos[adr+4] = qx
         self._data.qpos[adr+5] = qy
         self._data.qpos[adr+6] = qz
-
 
     def _refresh_markers(self):
         # Pantries: 0=empty, 1=blue, 2=yellow
@@ -231,8 +237,8 @@ class EurobotMJ(ParallelEnv):
         self.carry = {"blue": -1, "yellow": -1}
 
         # Spawn robots
-        self._set_agent_pose("blue",  NESTS["blue"], 0.0)
-        self._set_agent_pose("yellow", NESTS["yellow"], 0.0)
+        self._set_agent_pose("blue",  NESTS["blue"], -np.pi/2)
+        self._set_agent_pose("yellow", NESTS["yellow"], -np.pi/2)
 
         mujoco.mj_forward(self._model, self._data)
         self._refresh_markers()
@@ -309,7 +315,6 @@ class EurobotMJ(ParallelEnv):
         ]).astype(np.float32)
         return obs
 
-
     # -------------------- Actions --------------------
     def _apply_action(self, agent: str, a: np.ndarray):
         # Parse command
@@ -352,8 +357,6 @@ class EurobotMJ(ParallelEnv):
                         self._refresh_markers()
                         break
 
-
-
     def _grip_xy(self, agent: str) -> np.ndarray:
         return self._data.site_xpos[self._site_ids[agent]][:2].copy()
 
@@ -362,7 +365,6 @@ class EurobotMJ(ParallelEnv):
         owner_int = COLOR_TO_INT[owner]
         # Reward = number of pantries currently owned by this color
         return float(np.sum(self.pantry_occ == owner_int))
-
 
     def _score_both(self) -> tuple[float, float]:
         return self._score_agent("blue"), self._score_agent("yellow")
