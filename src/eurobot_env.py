@@ -124,6 +124,23 @@ class EurobotMJ(ParallelEnv):
             } for a in self.agents
         }
 
+        # --- IDs for wall/blue contact checks ---
+        self._wall_geom_ids = {
+            self._model.geom("wall_north").id,
+            self._model.geom("wall_south").id,
+            self._model.geom("wall_east").id,
+            self._model.geom("wall_west").id,
+        }
+        # Parts of blue that can touch walls
+        self._blue_contact_geom_ids = {
+            self._model.geom("blue_chassis").id,
+            self._model.geom("blue_left_tire").id,
+            self._model.geom("blue_right_tire").id,
+            self._model.geom("blue_caster_front").id,
+            self._model.geom("blue_caster_back").id,
+            # add more if you attach bumpers/claws later
+        }
+
         # Suggested integration substeps per control step
         self._substeps = CTRL_SUBSTEPS or max(1, int(CTRL_DT / self._model.opt.timestep + 1e-9))
 
@@ -222,6 +239,17 @@ class EurobotMJ(ParallelEnv):
             color = self._CLR_AVAIL if int(self.pickup_occ[i]) == 1 else self._CLR_SPENT
             self._model.geom_rgba[gid] = color
 
+    def _blue_wall_contact(self) -> tuple[bool, int]:
+        """Return (hit_any_wall, num_contacts) for blue vs walls this step."""
+        n_hit = 0
+        for i in range(self._data.ncon):
+            c = self._data.contact[i]
+            g1, g2 = int(c.geom1), int(c.geom2)
+            if ((g1 in self._blue_contact_geom_ids and g2 in self._wall_geom_ids) or
+                (g2 in self._blue_contact_geom_ids and g1 in self._wall_geom_ids)):
+                n_hit += 1
+        return (n_hit > 0), n_hit
+    
     # -------------------- API: reset/step/render --------------------
     def reset(self, seed: int | None = None, options=None):
         if seed is not None:
@@ -361,9 +389,17 @@ class EurobotMJ(ParallelEnv):
         # Reward = number of pantries currently owned by this color
         return float(np.sum(self.pantry_occ == owner_int))
 
-    def _score_both(self) -> tuple[float, float]:
-        return self._score_agent("blue"), self._score_agent("yellow")
+    def _blue_wall_penalty(self) -> float:
+        hit, _ = self._blue_wall_contact()
+        return -0.02 if hit else 0.0
 
+    def _score_both(self) -> tuple[float, float]:
+        base_blue   = self._score_agent("blue")
+        base_yellow = self._score_agent("yellow")
+        
+        pen_blue = self._blue_wall_penalty()
+        return base_blue + pen_blue, base_yellow
+    
     # -------------------- Simple scripted policy --------------------
     def _scripted_policy(self, agent: str) -> np.ndarray:
         p = self._body_xy(agent)
