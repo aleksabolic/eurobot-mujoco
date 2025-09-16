@@ -9,9 +9,9 @@ CTRL_DT = 0.02                       # Control period (50 Hz)
 WORLD_TIMESTEP = None                # If None, uses model.opt.timestep
 MAX_LIN_SPEED = 0.6                  # m/s (|v|<=1 scales to this)
 MAX_ANG_SPEED = 1.2                  # rad/s (|w|<=1 scales to this)
-WHEEL_RADIUS = 0.06   # keep
-AXLE_HALF    = 0.11   # was 0.16
-BASE_Z       = 0.12   # keep  
+WHEEL_RADIUS = 0.06   
+AXLE_HALF    = 0.11   
+BASE_Z       = 0.12   
 CTRL_SUBSTEPS = None
 
 # Top->Bottom, Left->Right
@@ -116,7 +116,6 @@ class EurobotMJ(ParallelEnv):
         }
         self._SITE = {"blue": "blue_grip", "yellow": "yellow_grip"}
 
-
         # Wheel motor actuator ids
         self._wheel_ids = {
             a: {
@@ -124,7 +123,6 @@ class EurobotMJ(ParallelEnv):
                 "right": self._model.actuator(self._ACT[a]["right"]).id,
             } for a in self.agents
         }
-
 
         # Suggested integration substeps per control step
         self._substeps = CTRL_SUBSTEPS or max(1, int(CTRL_DT / self._model.opt.timestep + 1e-9))
@@ -252,16 +250,16 @@ class EurobotMJ(ParallelEnv):
         a_yellow = self._scripted_policy("yellow") if self.scripted_opponent else actions["yellow"]
 
         # Apply controls (no stepping yet)
-        op_b = self._apply_action("blue", a_blue)
-        op_y = self._apply_action("yellow", a_yellow)
+        self._apply_action("blue", a_blue)
+        self._apply_action("yellow", a_yellow)
 
         # Advance physics ONCE per env step
         for _ in range(self._substeps):
             mujoco.mj_step(self._model, self._data)
 
         # After integration, resolve pick/drop (fresh poses)
-        self._maybe_pick_or_drop("blue", op_b)
-        self._maybe_pick_or_drop("yellow", op_y)
+        self._maybe_pick_or_drop("blue")
+        self._maybe_pick_or_drop("yellow")
 
         # Update visuals
         self._refresh_markers()
@@ -293,13 +291,6 @@ class EurobotMJ(ParallelEnv):
             self._viewer = None
 
     # -------------------- Observation --------------------
-    def _ego(self, agent: str) -> tuple[np.ndarray, float, float]:
-        """Return (my_xy, my_yaw, carrying_flag)."""
-        p = self._body_xy(agent)
-        th = self._body_yaw(agent)
-        carrying = 1.0 if self.carry[agent] >= 0 else 0.0
-        return p, th, carrying
-
     def _observe(self, agent: str) -> np.ndarray:
         me_idx = 0 if agent == "blue" else 1
         me, opp = self.agents[me_idx], self.agents[1 - me_idx]
@@ -327,41 +318,39 @@ class EurobotMJ(ParallelEnv):
         return obs
 
     # -------------------- Actions --------------------
-    def _apply_action(self, agent: str, a: np.ndarray) -> int:
+    def _apply_action(self, agent: str, a: np.ndarray) -> None:
         # Parse command
         v = float(np.clip(a[0], -1, 1)) * MAX_LIN_SPEED
         w = float(np.clip(a[1], -1, 1)) * MAX_ANG_SPEED
-        op = int(round(np.clip(a[2], 0, 2)))
+        # op = int(round(np.clip(a[2], 0, 2)))  # IGNORED now
 
         # Map (v, w) -> wheel angular velocities (rad/s)
         v_left  = (v - w * AXLE_HALF) / WHEEL_RADIUS
         v_right = (v + w * AXLE_HALF) / WHEEL_RADIUS
 
-        # Send setpoints; DO NOT STEP HERE
+        # Send setpoints
         aidL = self._wheel_ids[agent]["left"]
         aidR = self._wheel_ids[agent]["right"]
         self._data.ctrl[aidL] = v_left
         self._data.ctrl[aidR] = v_right
-        return op
-    
 
-    def _maybe_pick_or_drop(self, agent: str, op: int):
-        if op == 1:  # pick
-            if self.carry[agent] < 0:
-                grip = self._grip_xy(agent)
-                for i, name in enumerate(self.pickup_names):
-                    if self.pickup_occ[i] == 1 and within_circle(grip, PICKUPS[name], PICKUP_R):
-                        self.pickup_occ[i] = 0
-                        self.carry[agent] = 1
-                        break
-        elif op == 2:  # drop
-            if self.carry[agent] > 0:
-                p = self._body_xy(agent)
-                for i, name in enumerate(self.pantry_names):
-                    if within_circle(p, PANTRIES[name], PANTRY_R):
-                        self.pantry_occ[i] = COLOR_TO_INT[agent]
-                        self.carry[agent] = -1
-                        break
+    def _maybe_pick_or_drop(self, agent: str):
+        # Auto-pick
+        if self.carry[agent] < 0:
+            grip = self._grip_xy(agent)
+            for i, name in enumerate(self.pickup_names):
+                if self.pickup_occ[i] == 1 and within_circle(grip, PICKUPS[name], PICKUP_R):
+                    self.pickup_occ[i] = 0
+                    self.carry[agent] = 1
+                    break
+        # Auto-drop
+        else:
+            p = self._body_xy(agent)
+            for i, name in enumerate(self.pantry_names):
+                if within_circle(p, PANTRIES[name], PANTRY_R):
+                    self.pantry_occ[i] = COLOR_TO_INT[agent]
+                    self.carry[agent] = -1
+                    break
 
     def _grip_xy(self, agent: str) -> np.ndarray:
         return self._data.site_xpos[self._site_ids[agent]][:2].copy()

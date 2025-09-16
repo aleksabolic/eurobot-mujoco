@@ -1,7 +1,7 @@
 import os, argparse, time
 import numpy as np
 from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import DummyVecEnv
+from stable_baselines3.common.vec_env import DummyVecEnv, VecNormalize
 from stable_baselines3.common.env_util import make_vec_env
 from stable_baselines3.common.callbacks import BaseCallback
 from eurobot_env import EurobotMJ
@@ -35,7 +35,10 @@ if __name__ == "__main__":
 
     os.makedirs("runs", exist_ok=True)
     env = make_vec_env(make_env(scripted_opponent=True), n_envs=8)
-    model = PPO("MlpPolicy", env, n_steps=256, batch_size=1024, ent_coef=0.01, learning_rate=3e-4, gamma=0.995, verbose=0, tensorboard_log="runs/tb")
+    env = VecNormalize(env, norm_obs=True, norm_reward=True, clip_obs=10.0)
+    model = PPO("MlpPolicy", env, n_steps=256, batch_size=1024,
+            ent_coef=0.02, learning_rate=3e-4, gamma=0.995, clip_range=0.2,
+            tensorboard_log="runs/tb", verbose=0)
     total = 0
     ckpt_path = "runs/ppo_blue_last.zip"
     while total < args.timesteps:
