@@ -11,7 +11,7 @@ Minimal, fast simulator to explore Eurobot 2026 tactics with RL.
 ```bash
 python -m venv .venv && source .venv/bin/activate
 pip install -r requirements.txt
-python train_selfplay.py --timesteps 2_000_000
+python train.py --timesteps 2_000_000
 ```
 Evaluate:
 ```bash
