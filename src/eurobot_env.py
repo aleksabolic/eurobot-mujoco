@@ -5,6 +5,7 @@ from gymnasium import spaces
 from typing import Optional, Tuple
 from eurobot_world import EurobotWorld
 from robot import RobotProfile
+from policies import load_robot_config
 
 class EurobotDiscreteEnv(gym.Env):
     """
@@ -14,17 +15,18 @@ class EurobotDiscreteEnv(gym.Env):
     """
     metadata = {"render_modes": [], "name": "EurobotDiscrete-v1"}
 
-    def __init__(self,
-                 blue_profile: Optional[RobotProfile]=None,
-                 yellow_profile: Optional[RobotProfile]=None,
-                 seed: Optional[int]=None):
+    def __init__(self, seed: Optional[int]=None):
         super().__init__()
-        blue_profile   = blue_profile   or RobotProfile()
-        yellow_profile = yellow_profile or RobotProfile()
-        self.world = EurobotWorld(blue_profile, yellow_profile, seed=seed)
+
+        # TODO: Pomeri ovo u train.py ovako je malo seljacki
+        blue_prof, blue_pol = load_robot_config("robot_configs/blue_robot.json") 
+        yellow_prof, yellow_pol = load_robot_config("robot_configs/yellow_robot.json")
+
+        self.world = EurobotWorld(blue_prof, yellow_prof, seed=seed)
+        self.world.yellow_policy = yellow_pol
 
         self.n_nodes = len(self.world.nodes)
-        self.max_qty = blue_profile.max_action_qty  # assumed same for obs space shape
+        self.max_qty = blue_prof.max_action_qty  # assumed same for obs space shape
 
         self.action_space = spaces.MultiDiscrete([5, self.n_nodes, 3, self.max_qty+1])
         # obs = [t_left(float scaled 0..100*10), blue_node, yellow_node,
@@ -47,7 +49,7 @@ class EurobotDiscreteEnv(gym.Env):
         t10 = int(round(self.world.t_left * 10.0))
         vec = [t10, self.world.blue.node, self.world.yellow.node]
         vec += list(self.world.blue.inv)
-        vec += list(self.world.yellow.inv)
+        vec += list(self.world.yellow.inv) # TODO: Remove this, agent shouldn't know inv of the opponent
         for i in range(len(self.world.PANTRIES)): vec += list(self.world.pantries[i])
         for i in range(len(self.world.PICKUPS)):  vec += list(self.world.pickups[i])
         return np.array(vec, dtype=np.uint16)

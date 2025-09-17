@@ -14,27 +14,23 @@ except: pass
 N = 8
 CPU_IDS = list(range(N))
 
-def make_env_i(i, blue: RobotProfile, yellow: RobotProfile, max_decisions=400):
+def make_env_i(i):
     def _thunk():
         import os
         try: os.sched_setaffinity(0, {CPU_IDS[i]})
         except Exception: pass
-        env = EurobotDiscreteEnv(blue_profile=blue, yellow_profile=yellow)
-        return Monitor(TimeLimit(env, max_episode_steps=max_decisions))
+        env = EurobotDiscreteEnv()
+        return Monitor(TimeLimit(env, max_episode_steps=400))
     return _thunk
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--timesteps", type=int, default=1_000_000)
     ap.add_argument("--resume", action="store_true")
-    ap.add_argument("--max_decisions", type=int, default=400)
-    args = ap.parse_args()
-
-    blue   = RobotProfile()          
-    yellow = RobotProfile()              
+    args = ap.parse_args()       
 
     os.makedirs("runs", exist_ok=True)
-    env_fns = [make_env_i(i, blue, yellow, args.max_decisions) for i in range(N)]
+    env_fns = [make_env_i(i) for i in range(N)]
     env = SubprocVecEnv(env_fns, start_method="spawn")
 
     # Discrete counts → keep norm_obs=False; norm_reward=True is fine.
