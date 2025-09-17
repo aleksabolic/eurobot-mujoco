@@ -41,7 +41,7 @@
             <body name="blue_base" pos="1.20 0.8 0.12" euler="0 0 -90">
                   <freejoint name="blue_base_free"/>
 
-                  <geom name="blue_chassis" type="cylinder" pos="0 0 -0.02" size="0.11 0.045" density="300" material="matblue" contype="0" conaffinity="0"/>
+                  <geom name="blue_chassis" type="cylinder" pos="0 0 -0.02" size="0.11 0.045" density="300" material="matblue" contype="1" conaffinity="1"/>
 
                   <geom name="blue_ballast" type="box" pos="0 0 -0.08" size="0.07 0.07 0.01" density="2000" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
 
@@ -65,7 +65,7 @@
             <body name="yellow_base" pos="-1.20 0.8 0.12" euler="0 0 -90">
                   <freejoint name="yellow_base_free"/>
 
-                  <geom name="yellow_chassis" type="cylinder" pos="0 0 -0.02" size="0.11 0.045" density="300" material="matyellow" contype="0" conaffinity="0"/>
+                  <geom name="yellow_chassis" type="cylinder" pos="0 0 -0.02" size="0.11 0.045" density="300" material="matyellow" contype="1" conaffinity="1"/>
 
                   <geom name="yellow_ballast" type="box" pos="0 0 -0.08" size="0.07 0.07 0.01" density="2000" rgba="0.1 0.1 0.1 1" contype="0" conaffinity="0"/>
 

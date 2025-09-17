@@ -7,7 +7,7 @@ import mujoco.viewer
 # -------------------- Constants --------------------
 CTRL_DT = 0.02                       # Control period (50 Hz)
 WORLD_TIMESTEP = None                # If None, uses model.opt.timestep
-MAX_LIN_SPEED = 0.6                  # m/s (|v|<=1 scales to this)
+MAX_LIN_SPEED = 1.0                  # m/s (|v|<=1 scales to this)
 MAX_ANG_SPEED = 1.2                  # rad/s (|w|<=1 scales to this)
 WHEEL_RADIUS = 0.06   
 AXLE_HALF    = 0.11   
@@ -166,13 +166,19 @@ class EurobotMJ(ParallelEnv):
         self.rng = np.random.default_rng()
         self._viewer = None
 
+        # --- Reward shaping state ---
+        self.gamma = 0.99
+        self._prev_owned = {"blue": 0, "yellow": 0}
+        self._prev_phi   = {"blue": 0.0, "yellow": 0.0}
+
     # -------------------- Spaces --------------------
     def _init_spaces(self):
         obs_dim = (4  # my (x, y, yaw, carrying_flag)
                    + 3  # opp (x, y, yaw)
                    + len(self.pickup_names) # pickup occupancy (0/1)
                    + len(self.pantry_names) # pantry occupancy (0/1/2)
-                   + 1)  # time_left
+                   + 1 # time_left
+                   + 2 ) # sin/cos yaw  
         self.observation_spaces = {
             a: spaces.Box(-np.inf, np.inf, (obs_dim,), dtype=np.float32)
             for a in self.agents
@@ -261,6 +267,8 @@ class EurobotMJ(ParallelEnv):
         self.pickup_occ[:] = 1
         self.pantry_occ[:] = 0
         self.carry = {"blue": -1, "yellow": -1}
+        self._prev_owned = {"blue": 0, "yellow": 0}
+        self._prev_phi   = {a: self._phi(a) for a in self.agents}
 
         # Spawn robots
         self._set_agent_pose("blue",  NESTS["blue"], -np.pi/2)
@@ -324,11 +332,11 @@ class EurobotMJ(ParallelEnv):
         me, opp = self.agents[me_idx], self.agents[1 - me_idx]
 
         my_xy = self._body_xy(me)
-        my_yaw = self._body_yaw(me)
+        my_yaw = self._body_yaw(me); my_c, my_s = np.cos(my_yaw), np.sin(my_yaw)
         carrying = 1.0 if self.carry[me] >= 0 else 0.0
 
         opp_xy = self._body_xy(opp)
-        opp_yaw = self._body_yaw(opp)
+        opp_yaw = self._body_yaw(opp); op_c, op_s = np.cos(opp_yaw), np.sin(opp_yaw)
 
         # Normalize discrete occupancies to floats
         pickup_vec = self.pickup_occ.astype(np.float32)              # 0/1
@@ -337,8 +345,8 @@ class EurobotMJ(ParallelEnv):
         time_left = 1.0 - (self._step_count / self.max_steps)
 
         obs = np.concatenate([
-            my_xy, [my_yaw, carrying],
-            opp_xy, [opp_yaw],
+            my_xy, [my_c, my_s, carrying],
+            opp_xy, [op_c, op_s],
             pickup_vec,
             pantry_vec,
             [time_left]
@@ -388,17 +396,60 @@ class EurobotMJ(ParallelEnv):
         owner_int = COLOR_TO_INT[owner]
         # Reward = number of pantries currently owned by this color
         return float(np.sum(self.pantry_occ == owner_int))
+    
+    def _nearest_pickup_dist(self, agent: str) -> float:
+        grip = self._grip_xy(agent)
+        dists = [np.linalg.norm(grip - PICKUPS[name]) for i, name in enumerate(self.pickup_names) if self.pickup_occ[i] == 1]
+        return min(dists) if dists else 0.0
+
+    def _nearest_pantry_dist(self, agent: str) -> float:
+        p = self._body_xy(agent)
+        my_int = COLOR_TO_INT[agent]
+        pool = [PANTRIES[name] for i, name in enumerate(self.pantry_names) if self.pantry_occ[i] == 0]
+        if not pool:
+            pool = [PANTRIES[name] for i, name in enumerate(self.pantry_names) if self.pantry_occ[i] != my_int]
+        dists = [np.linalg.norm(p - c) for c in pool] if pool else [0.0]
+        return min(dists)
+
+    def _phi(self, agent: str) -> float:
+        # Potential = negative distance to the relevant subgoal
+        if self.carry[agent] < 0:
+            d = self._nearest_pickup_dist(agent)
+        else:
+            d = self._nearest_pantry_dist(agent)
+        # Scale to reasonable magnitude
+        return -d
+
 
     def _blue_wall_penalty(self) -> float:
         hit, _ = self._blue_wall_contact()
         return -0.02 if hit else 0.0
 
     def _score_both(self) -> tuple[float, float]:
-        base_blue   = self._score_agent("blue")
-        base_yellow = self._score_agent("yellow")
-        
+        # Base event reward: count deltas since last step
+        cur_owned = {
+            "blue":   int(np.sum(self.pantry_occ == COLOR_TO_INT["blue"])),
+            "yellow": int(np.sum(self.pantry_occ == COLOR_TO_INT["yellow"]))
+        }
+        delta_blue   = cur_owned["blue"]   - self._prev_owned["blue"]
+        delta_yellow = cur_owned["yellow"] - self._prev_owned["yellow"]
+        self._prev_owned = cur_owned
+
+        # Potential-based shaping (Ng et al. 1999): gamma*Phi(s') - Phi(s)
+        r_blue_shape   = self.gamma * self._phi("blue")   - self._prev_phi["blue"]
+        r_yellow_shape = self.gamma * self._phi("yellow") - self._prev_phi["yellow"]
+        self._prev_phi["blue"]   = self._phi("blue")
+        self._prev_phi["yellow"] = self._phi("yellow")
+
+        # Penalties/bonuses
         pen_blue = self._blue_wall_penalty()
-        return base_blue + pen_blue, base_yellow
+        step_pen = -0.001  # small time penalty to discourage dithering
+
+        # Weights (tune): big for event, small for shaping
+        r_blue   = 3.0 * float(delta_blue)   + 0.15 * float(r_blue_shape)   + pen_blue + step_pen
+        r_yellow = 3.0 * float(delta_yellow) + 0.15 * float(r_yellow_shape) + 0.0      + step_pen
+        return r_blue, r_yellow
+
     
     # -------------------- Simple scripted policy --------------------
     def _scripted_policy(self, agent: str) -> np.ndarray:
