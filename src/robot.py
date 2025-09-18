@@ -21,10 +21,34 @@ class RobotProfile:
     can_flip: bool = True
     max_action_qty: int = 4
     capacity: int = 999
+    v_max: float = 0.80   # m/s (cruise speed cap)
+    a_max: float = 1.50   # m/s^2 (sym accel/decel)
 
     def travel_time(self, dist_m: float) -> float:
-        # TODO: Replace this with trapezoid speed profile f(amax, vmax, dist) -> time
-        return self.t_startstop + dist_m / max(self.v_mean, 1e-6)
+        """
+        Symmetric trapezoidal profile (accel -> cruise -> decel).
+        Falls back to triangular (no cruise) if the distance is too short to reach v_max.
+
+        time = t_startstop + motion_time
+        """
+        d = max(0.0, float(dist_m))
+        if d == 0.0:
+            return self.t_startstop
+
+        a = max(self.a_max, 1e-9)
+        vmax = max(self.v_max, 1e-9)
+
+        d_min = vmax * vmax / a 
+
+        if d <= d_min + 1e-12:
+            t_motion = 2.0 * np.sqrt(d / a)
+        else:
+            t_acc = vmax / a
+            d_cruise = d - d_min
+            t_cruise = d_cruise / vmax
+            t_motion = 2.0 * t_acc + t_cruise
+
+        return self.t_startstop + t_motion
 
     def handle_time(self, verb: Verb, qty: int) -> float:
         if verb == Verb.PICK:  return self.t_pick_base  + qty*self.t_pick_per
