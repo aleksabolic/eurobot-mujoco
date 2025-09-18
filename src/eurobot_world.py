@@ -234,7 +234,7 @@ class EurobotWorld:
 
         verb = Verb(verb_i)
         if verb == Verb.PICK:
-            idx = self.pickup_idx[rob.node]
+            idx = self.pickup_idx[node]
             if idx == -1:
                 self._snap(f"{actor_tag}_pick_invalid"); return r
             can_take = int(self.pickups[idx, color])
@@ -252,26 +252,40 @@ class EurobotWorld:
             return r
 
         if verb == Verb.PLACE:
-            idx = self.pantry_idx[rob.node]
-            put = max(0, min(qty, int(rob.inv[color])))
-            rob.inv[color] -= put
+            idx = self.pantry_idx[node]
+            have = int(rob.inv[color])
+            if have <= 0:
+                self._snap(f"{actor_tag}_place_empty")
+                return r
+
             if idx != -1:  # placing at a pantry
-                # pantries[idx] is length-3; sum explicitly to avoid small-array overhead
                 p0 = int(self.pantries[idx, 0]); p1 = int(self.pantries[idx, 1]); p2 = int(self.pantries[idx, 2])
                 total_here = p0 + p1 + p2
                 room = max(0, self.pantry_cap - total_here)
-                put  = min(put, room)
+                put = max(0, min(qty, have, room))
                 if put > 0:
                     self.pantries[idx, color] += put
-                if actor_tag=="blue" and color in (Col.BLUE, Col.NEUTRAL):
-                    r += P2_PANTRY * put
-            else:
-                # maybe nest
-                if actor_tag=="blue" and rob.node == self.NEST_BLUE:
-                    delta = min(put, max(0, NEST_CAP_BLUE - int(self.nest_blue_counted)))
+                    rob.inv[color]            -= put
+                    if actor_tag=="blue" and color in (Col.BLUE, Col.NEUTRAL):
+                        r += P2_PANTRY * put
+                    self._snap(f"{actor_tag}_place")
+                else:
+                    self._snap(f"{actor_tag}_place_full")
+                return r
+
+            if actor_tag=="blue" and node == self.NEST_BLUE:
+                put = max(0, min(qty, have))
+                delta = min(put, max(0, NEST_CAP_BLUE - int(self.nest_blue_counted)))
+                if delta > 0:
+                    rob.inv[color]         -= delta
                     self.nest_blue_counted += delta
                     r += P1_NEST * delta
-            self._snap(f"{actor_tag}_place")
+                    self._snap(f"{actor_tag}_place")
+                else:
+                    self._snap(f"{actor_tag}_place_nest_full")
+                return r
+
+            self._snap(f"{actor_tag}_place_invalid")
             return r
 
         if verb == Verb.FLIP:
@@ -290,7 +304,7 @@ class EurobotWorld:
         if verb == Verb.STEAL:
             if not self.allow_steal:
                 self._snap(f"{actor_tag}_steal_blocked"); return r
-            idx = self.pantry_idx[rob.node]
+            idx = self.pantry_idx[node]
             if idx == -1:
                 self._snap(f"{actor_tag}_steal_invalid"); return r
             have = int(self.pantries[idx, color])
@@ -323,7 +337,7 @@ class EurobotWorld:
 
     # ----- helpers -----
     def _snap(self, tag: str):
-        return # slows down learning 
+        # return # slows down learning 
         self.history.append(dict(
             tag=tag,
             t_left=float(self.t_left),
@@ -415,4 +429,3 @@ class EurobotWorld:
         if k != -1 and int(self.pantries[k, Col.NEUTRAL]) > 0:
             return int(Col.NEUTRAL)
         return int(opp)
-

@@ -13,7 +13,7 @@ class Policy:
 
     def next_action(self,
                     actor_tag: str,
-                    world: "EurobotWorld",
+                    world: "EurobotWorld", # type: ignore
                     state,             # RobotState
                     rng: np.random.Generator) -> Tuple[int,int,int,int]:
         raise NotImplementedError
