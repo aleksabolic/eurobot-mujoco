@@ -11,7 +11,7 @@ torch.set_num_threads(1)
 try: torch.set_num_interop_threads(1)
 except: pass
 
-N = 8
+N = 18
 CPU_IDS = list(range(N))
 
 def make_env_i(i):
@@ -31,7 +31,7 @@ if __name__ == "__main__":
 
     os.makedirs("runs", exist_ok=True)
     env_fns = [make_env_i(i) for i in range(N)]
-    env = SubprocVecEnv(env_fns, start_method="spawn")
+    env = SubprocVecEnv(env_fns)
 
     # Discrete counts → keep norm_obs=False; norm_reward=True is fine.
     vecnorm_path = "runs/vecnorm.pkl"
@@ -46,9 +46,9 @@ if __name__ == "__main__":
         model = PPO.load(ckpt_path, env=env, device="auto")
     else:
         model = PPO("MlpPolicy", env,
-                    n_steps=1024, batch_size=8192,
+                    n_steps=4096, batch_size=36864,
                     ent_coef=0.01, learning_rate=3e-4,
-                    gamma=0.995, clip_range=0.2,
+                    gamma=0.995, clip_range=0.2, n_epochs=5,
                     tensorboard_log="runs/tb")
 
     total = 0

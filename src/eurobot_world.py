@@ -99,6 +99,14 @@ class EurobotWorld:
         self.pantry_cap  = int(PANTRY_CAP)
         self.reset(seed=seed)
 
+        # maps from node_id -> local index or -1 (O(1) lookup)
+        self.pantry_idx = -np.ones(self.N, dtype=np.int32)
+        self.pickup_idx = -np.ones(self.N, dtype=np.int32)
+        for j, node_id in enumerate(self.PANTRIES):
+            self.pantry_idx[node_id] = j
+        for j, node_id in enumerate(self.PICKUPS):
+            self.pickup_idx[node_id] = j
+
     # ----- lifecycle -----
     def reset(self, seed: Optional[int]=None):
         if seed is not None: self.rng = np.random.default_rng(seed)
@@ -143,118 +151,40 @@ class EurobotWorld:
                   action: Tuple[int,int,int,int], actor_tag: str) -> float:
         verb_i, node, color, qty = action
         verb = Verb(int(verb_i))
-        node = int(np.clip(node,  0, self.N-1))
-        color = int(np.clip(color, 0, 2))
-        qty   = int(np.clip(qty,   0, prof.max_action_qty))
+        node = int(node)
+        if node < 0:
+            node = 0
+        elif node > self.N - 1:
+            node = self.N - 1
+        color = int(color)
+        if color < 0:
+            color = 0
+        elif color > 2:
+            color = 2
+        qty = int(qty)
+        if qty < 0:
+            qty = 0
+        elif qty > prof.max_action_qty:
+            qty = prof.max_action_qty
 
         r = 0.0
-        def finish_move():
-            rob.node = node
-            self._snap(f"{actor_tag}_move")
-
-        def finish_pick():
-            if self.nodes[rob.node].kind != NodeType.PICKUP: 
-                self._snap(f"{actor_tag}_pick_invalid"); return
-            idx = self.PICKUPS.index(rob.node)
-            can_take = int(self.pickups[idx, color])
-            room = int(prof.capacity - int(rob.inv.sum()))
-            take = max(0, min(qty, can_take, room))
-            if take > 0:
-                self.pickups[idx, color] -= take
-                rob.inv[color]           += take
-                self._snap(f"{actor_tag}_pick")
-            else:
-                self._snap(f"{actor_tag}_pick_empty")
-
-        def finish_place_blue():
-            nd = self.nodes[rob.node]
-            put = max(0, min(qty, int(rob.inv[color])))
-            rob.inv[color] -= put
-            if nd.kind == NodeType.PANTRY:
-                k = self.PANTRIES.index(rob.node)
-                room = max(0, self.pantry_cap - int(self.pantries[k].sum()))
-                put = min(put, room)
-                if put > 0:
-                    self.pantries[k, color] += put
-                if actor_tag=="blue" and color in (Col.BLUE, Col.NEUTRAL):
-                    nonlocal r; r += P2_PANTRY * put
-            elif actor_tag=="blue" and nd.kind==NodeType.NEST and rob.node==self.NEST_BLUE:
-                delta = min(put, max(0, NEST_CAP_BLUE - int(self.nest_blue_counted)))
-                self.nest_blue_counted += delta
-                r += P1_NEST * delta
-            self._snap(f"{actor_tag}_place")
-
-        def finish_place_yellow():
-            nd = self.nodes[rob.node]
-            put = max(0, min(qty, int(rob.inv[color])))
-            rob.inv[color] -= put
-            if nd.kind == NodeType.PANTRY:
-                k = self.PANTRIES.index(rob.node)
-                room = max(0, self.pantry_cap - int(self.pantries[k].sum()))
-                put = min(put, room)
-                if put > 0:
-                    self.pantries[k, color] += put
-            self._snap(f"{actor_tag}_place")
-
-        def finish_steal():
-            if not self.allow_steal:
-                self._snap(f"{actor_tag}_steal_blocked"); return
-            nd = self.nodes[rob.node]
-            if nd.kind != NodeType.PANTRY:
-                self._snap(f"{actor_tag}_steal_invalid"); return
-            k = self.PANTRIES.index(rob.node)
-            have = int(self.pantries[k, color])
-            room = int(prof.capacity - int(rob.inv.sum()))
-            take = max(0, min(qty, have, room))
-            if take > 0:
-                self.pantries[k, color] -= take
-                rob.inv[color]          += take
-                self._snap(f"{actor_tag}_steal")
-            else:
-                self._snap(f"{actor_tag}_steal_empty")
-
-        def finish_flip():
-            if not prof.can_flip:
-                self._snap(f"{actor_tag}_flip_blocked"); return
-            # flip from the most abundant non-target pile to 'color'
-            src_candidates = [Col.BLUE, Col.YELLOW, Col.NEUTRAL]
-            if color in src_candidates: src_candidates.remove(Col(color))
-            src = int(src_candidates[int(np.argmax(rob.inv[src_candidates]))])
-            k = min(qty, int(rob.inv[src]))
-            rob.inv[src]   -= k
-            rob.inv[color] += k
-            self._snap(f"{actor_tag}_flip")
-
         dist   = float(self.D[rob.node, node]) if node != rob.node else 0.0
         t_move = prof.travel_time(dist) if verb in (Verb.MOVE, Verb.PICK, Verb.PLACE) and dist > 0 else 0.0
         t_hand = prof.handle_time(verb, qty)
         t_total = t_move + t_hand
 
+        # if "instant" work, just apply immediately without scheduling
         if t_total <= 0.0:
             # MOVE to same node → no-op; other verbs qty=0 → execute immediately
             if verb == Verb.MOVE:
                 return r
-            def cb_immediate():
-                if t_move > 0: finish_move()
-                if verb == Verb.PICK:   finish_pick()
-                elif verb == Verb.PLACE:
-                    (finish_place_blue() if actor_tag=="blue" else finish_place_yellow())
-                elif verb == Verb.FLIP: finish_flip()
-                elif verb == Verb.STEAL: finish_steal()
-                elif verb == Verb.WAIT: self._snap(f"{actor_tag}_wait")
-            cb_immediate()
-            return r
+            did_move = (t_move > 0.0)
+            return self._finish_event(actor_tag, int(verb), node, color, qty, did_move, r)
 
-        def cb():
-            if t_move > 0: finish_move()
-            if verb == Verb.PICK:   finish_pick()
-            elif verb == Verb.PLACE:
-                (finish_place_blue() if actor_tag=="blue" else finish_place_yellow())
-            elif verb == Verb.FLIP: finish_flip()
-            elif verb == Verb.STEAL: finish_steal()
-            elif verb == Verb.WAIT: self._snap(f"{actor_tag}_wait")
-
-        rob.event = (t_total, cb)
+        # else schedule as a compact tuple: [t_remaining, actor_id, verb, node, color, qty, did_move]
+        actor_id = 0 if actor_tag=="blue" else 1
+        did_move = (t_move > 0.0)
+        rob.event = [t_total, actor_id, int(verb), node, color, qty, did_move]
         return r
 
     # ----- simple scripted yellow -----
@@ -274,20 +204,113 @@ class EurobotWorld:
         # Advance the match clock here ONLY
         self.t_left = max(0.0, self.t_left - dt)
 
-        # Decrease remaining times
+        # Decrease remaining times (events are compact lists)
         if self.blue.event is not None:
-            t, cb = self.blue.event
-            self.blue.event = (t - dt, cb)
+            self.blue.event[0] -= dt
         if self.yellow.event is not None:
-            t, cb = self.yellow.event
-            self.yellow.event = (t - dt, cb)
+            self.yellow.event[0] -= dt
 
         eps = 1e-9
         if self.blue.event   is not None and self.blue.event[0]   <= eps:
-            cb = self.blue.event[1];   self.blue.event   = None; cb()
+            # unpack and finish
+            _, actor_id, verb, node, color, qty, did_move = self.blue.event
+            self.blue.event = None
+            _ = self._finish_event("blue", verb, node, color, qty, bool(did_move), 0.0)
         if self.yellow.event is not None and self.yellow.event[0] <= eps:
-            cb = self.yellow.event[1]; self.yellow.event = None; cb()
+            _, actor_id, verb, node, color, qty, did_move = self.yellow.event
+            self.yellow.event = None
+            _ = self._finish_event("yellow", verb, node, color, qty, bool(did_move), 0.0)
         return dt
+
+    # ----- compact event executor -----
+    def _finish_event(self, actor_tag: str, verb_i: int, node: int, color: int, qty: int, did_move: bool, r_in: float) -> float:
+        r = r_in
+        rob   = self.blue   if actor_tag=="blue"   else self.yellow
+        prof  = self.blue_prof if actor_tag=="blue" else self.yellow_prof
+
+        if did_move:
+            rob.node = node
+            self._snap(f"{actor_tag}_move")
+
+        verb = Verb(verb_i)
+        if verb == Verb.PICK:
+            idx = self.pickup_idx[rob.node]
+            if idx == -1:
+                self._snap(f"{actor_tag}_pick_invalid"); return r
+            can_take = int(self.pickups[idx, color])
+            # rob.inv is length-3: avoid tiny numpy sum allocation by summing scalars
+            inv0 = int(rob.inv[0]); inv1 = int(rob.inv[1]); inv2 = int(rob.inv[2])
+            inv_sum = inv0 + inv1 + inv2
+            room = int(prof.capacity - inv_sum)
+            take     = max(0, min(qty, can_take, room))
+            if take > 0:
+                self.pickups[idx, color] -= take
+                rob.inv[color]           += take
+                self._snap(f"{actor_tag}_pick")
+            else:
+                self._snap(f"{actor_tag}_pick_empty")
+            return r
+
+        if verb == Verb.PLACE:
+            idx = self.pantry_idx[rob.node]
+            put = max(0, min(qty, int(rob.inv[color])))
+            rob.inv[color] -= put
+            if idx != -1:  # placing at a pantry
+                # pantries[idx] is length-3; sum explicitly to avoid small-array overhead
+                p0 = int(self.pantries[idx, 0]); p1 = int(self.pantries[idx, 1]); p2 = int(self.pantries[idx, 2])
+                total_here = p0 + p1 + p2
+                room = max(0, self.pantry_cap - total_here)
+                put  = min(put, room)
+                if put > 0:
+                    self.pantries[idx, color] += put
+                if actor_tag=="blue" and color in (Col.BLUE, Col.NEUTRAL):
+                    r += P2_PANTRY * put
+            else:
+                # maybe nest
+                if actor_tag=="blue" and rob.node == self.NEST_BLUE:
+                    delta = min(put, max(0, NEST_CAP_BLUE - int(self.nest_blue_counted)))
+                    self.nest_blue_counted += delta
+                    r += P1_NEST * delta
+            self._snap(f"{actor_tag}_place")
+            return r
+
+        if verb == Verb.FLIP:
+            if not prof.can_flip:
+                self._snap(f"{actor_tag}_flip_blocked"); return r
+            # move from most abundant non-target to target
+            src_candidates = [Col.BLUE, Col.YELLOW, Col.NEUTRAL]
+            if color in src_candidates: src_candidates.remove(Col(color))
+            src = int(src_candidates[int(np.argmax(rob.inv[src_candidates]))])
+            k = min(qty, int(rob.inv[src]))
+            rob.inv[src]   -= k
+            rob.inv[color] += k
+            self._snap(f"{actor_tag}_flip")
+            return r
+
+        if verb == Verb.STEAL:
+            if not self.allow_steal:
+                self._snap(f"{actor_tag}_steal_blocked"); return r
+            idx = self.pantry_idx[rob.node]
+            if idx == -1:
+                self._snap(f"{actor_tag}_steal_invalid"); return r
+            have = int(self.pantries[idx, color])
+            inv0 = int(rob.inv[0]); inv1 = int(rob.inv[1]); inv2 = int(rob.inv[2])
+            inv_sum = inv0 + inv1 + inv2
+            room = int(prof.capacity - inv_sum)
+            take = max(0, min(qty, have, room))
+            if take > 0:
+                self.pantries[idx, color] -= take
+                rob.inv[color]            += take
+                self._snap(f"{actor_tag}_steal")
+            else:
+                self._snap(f"{actor_tag}_steal_empty")
+            return r
+
+        if verb == Verb.WAIT:
+            self._snap(f"{actor_tag}_wait")
+            return r
+
+        return r
 
     # ----- terminal bonus -----
     def _terminal_bonus(self) -> float:
@@ -300,7 +323,7 @@ class EurobotWorld:
 
     # ----- helpers -----
     def _snap(self, tag: str):
-        # return # slows down learning 
+        return # slows down learning 
         self.history.append(dict(
             tag=tag,
             t_left=float(self.t_left),
@@ -317,8 +340,8 @@ class EurobotWorld:
         return int(pool[i])
 
     def _pickup_avail(self, node: int, color: int) -> int:
-        if node not in self.PICKUPS: return 0
-        return int(self.pickups[self.PICKUPS.index(node), color])
+        idx = self.pickup_idx[node]
+        return 0 if idx == -1 else int(self.pickups[idx, color])
 
     def _best_pantry_for_yellow(self) -> int:
         scores=[]
@@ -335,12 +358,13 @@ class EurobotWorld:
         return self._pickup_avail(node, color)
 
     def pantry_avail(self, node: int, color: int) -> int:
-        if node not in self.PANTRIES: return 0
-        return int(self.pantries[self.PANTRIES.index(node), color])
+        idx = self.pantry_idx[node]
+        return 0 if idx == -1 else int(self.pantries[idx, color])
 
     def nearest_pickup_with_stock(self, start: int, color: int) -> Optional[int]:
         pool = [self.PICKUPS[i] for i in range(len(self.PICKUPS)) if self.pickups[i, color] > 0]
-        if not pool: return None
+        if not pool:
+            return None
         return self._nearest(start, pool)
 
     def pref_pick_color(self, actor_tag: str) -> int:
@@ -352,9 +376,11 @@ class EurobotWorld:
         scores=[]
         rob = (self.yellow if actor_tag=="yellow" else self.blue)
         for k,i in enumerate(self.PANTRIES):
-            total = int(self.pantries[k].sum())
+            # pantries[k] is length-3; sum explicitly
+            p0 = int(self.pantries[k, 0]); p1 = int(self.pantries[k, 1]); p2 = int(self.pantries[k, 2])
+            total = p0 + p1 + p2
             room  = max(0, self.pantry_cap - total) if self.pantry_cap > 0 else 999
-            if room <= 0: 
+            if room <= 0:
                 continue
             dist = float(self.D[rob.node, i])
             spread_pen = 0.0
@@ -383,8 +409,10 @@ class EurobotWorld:
     def prefer_steal_color(self, actor_tag: str, pantry_node: int) -> int:
         # steal opponent color first; if empty, steal neutral
         opp = Col.BLUE if actor_tag=="yellow" else Col.YELLOW
-        k = self.PANTRIES.index(pantry_node)
-        if int(self.pantries[k, opp]) > 0: return int(opp)
-        if int(self.pantries[k, Col.NEUTRAL]) > 0: return int(Col.NEUTRAL)
+        k = self.pantry_idx[pantry_node]
+        if k != -1 and int(self.pantries[k, opp]) > 0:
+            return int(opp)
+        if k != -1 and int(self.pantries[k, Col.NEUTRAL]) > 0:
+            return int(Col.NEUTRAL)
         return int(opp)
 

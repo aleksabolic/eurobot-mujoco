@@ -17,23 +17,30 @@ class EurobotDiscreteEnv(gym.Env):
 
     def __init__(self, seed: Optional[int]=None):
         super().__init__()
-
-        # TODO: Pomeri ovo u train.py ovako je malo seljacki
-        blue_prof, blue_pol = load_robot_config("robot_configs/blue_robot.json") 
+        # TODO: move config loading out of ctor if needed
+        blue_prof, blue_pol = load_robot_config("robot_configs/blue_robot.json")
         yellow_prof, yellow_pol = load_robot_config("robot_configs/yellow_robot.json")
 
         self.world = EurobotWorld(blue_prof, yellow_prof, seed=seed)
         self.world.yellow_policy = yellow_pol
 
         self.n_nodes = len(self.world.nodes)
-        self.max_qty = blue_prof.max_action_qty  # assumed same for obs space shape
+        self.max_qty = int(blue_prof.max_action_qty)  # assumed same for obs space shape
 
         self.action_space = spaces.MultiDiscrete([5, self.n_nodes, 3, self.max_qty+1])
         # obs = [t_left(float scaled 0..100*10), blue_node, yellow_node,
         #        blue_inv(3), yellow_inv(3),
         #        pantries(#*3), pickups(#*3)]
         obs_dim = 3 + 3 + 3 + 3*len(self.world.PANTRIES) + 3*len(self.world.PICKUPS)
-        self.observation_space = spaces.Box(low=0, high=65535, shape=(obs_dim,), dtype=np.uint16)
+        self.observation_space = spaces.Box(low=0.0, high=1e6, shape=(obs_dim,), dtype=np.float32)
+        self._obs_buf = np.zeros((obs_dim,), dtype=np.float32)
+        # slices: t_by(3), blue_inv(3), yellow_inv(3), pantries, pickups
+        i = 0
+        self._sl_t_by = slice(i, i+3); i += 3
+        self._sl_inv_b = slice(i, i+3); i += 3
+        self._sl_inv_y = slice(i, i+3); i += 3
+        self._sl_pan   = slice(i, i + 3*len(self.world.PANTRIES)); i += 3*len(self.world.PANTRIES)
+        self._sl_pick  = slice(i, i + 3*len(self.world.PICKUPS));  i += 3*len(self.world.PICKUPS)
 
     def reset(self, seed: Optional[int]=None, options=None):
         self.world.reset(seed=seed)
@@ -45,11 +52,14 @@ class EurobotDiscreteEnv(gym.Env):
         return self._obs(), float(r), bool(done), False, {}
 
     def _obs(self):
-        # scale t_left (float) into an int for compact obs (×10 precision)
-        t10 = int(round(self.world.t_left * 10.0))
-        vec = [t10, self.world.blue.node, self.world.yellow.node]
-        vec += list(self.world.blue.inv)
-        vec += list(self.world.yellow.inv) # TODO: Remove this, agent shouldn't know inv of the opponent
-        for i in range(len(self.world.PANTRIES)): vec += list(self.world.pantries[i])
-        for i in range(len(self.world.PICKUPS)):  vec += list(self.world.pickups[i])
-        return np.array(vec, dtype=np.uint16)
+        w = self.world
+        o = self._obs_buf
+        # pack scalars
+        o[self._sl_t_by] = (w.t_left * 10.0, float(w.blue.node), float(w.yellow.node))
+        # inventories
+        o[self._sl_inv_b] = w.blue.inv
+        o[self._sl_inv_y] = w.yellow.inv
+        # pantries/pickups flattened
+        o[self._sl_pan]  = w.pantries.reshape(-1)
+        o[self._sl_pick] = w.pickups.reshape(-1)
+        return o
