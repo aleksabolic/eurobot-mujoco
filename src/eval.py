@@ -1,13 +1,14 @@
 import argparse
 from stable_baselines3 import PPO
 from eurobot_env import EurobotDiscreteEnv
-from eurobot_render import EurobotRenderer
+from eurobot_render import EurobotCV2Renderer
 from robot import RobotProfile
+import time
 
 def run(model_path, episodes=3, render=False):
     env = EurobotDiscreteEnv()
     model = PPO.load(model_path, device="auto")
-    renderer = EurobotRenderer(env.world, bg_path="assets/table_bis.png", bg_alpha=0.35)
+    renderer = EurobotCV2Renderer(env.world, size=(1000, 700)) 
     for ep in range(episodes):
         o, _ = env.reset()
         done = False
@@ -18,12 +19,11 @@ def run(model_path, episodes=3, render=False):
             R += r
             done = term
             if render:
-                renderer.draw_snapshot(idx=-1, pause=0.003)
+                renderer.draw_snapshot(show=True)
+                time.sleep(1/25.0)
         print(f"Episode {ep+1}: return blue={R:.2f}")
         print([h["tag"] for h in env.world.history[:12]])
         print([h["tag"] for h in env.world.history[-12:]])
-        if render:
-            renderer.draw_snapshot(idx=-1, show=True)
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
