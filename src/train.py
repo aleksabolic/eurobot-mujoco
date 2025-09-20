@@ -23,6 +23,25 @@ def make_env_i(i):
         return Monitor(TimeLimit(env, max_episode_steps=400))
     return _thunk
 
+def eval_policy(model, episodes: int = 3, max_steps: int = 1000):
+    """Deterministic evaluation on raw (unnormalized) env to print true returns."""
+    env = EurobotDiscreteEnv()
+    returns = []
+    for ep in range(episodes):
+        o, _ = env.reset()
+        done = False
+        R = 0.0
+        steps = 0
+        while not done and steps < max_steps:
+            a, _ = model.predict(o, deterministic=True)
+            o, r, term, trunc, _ = env.step(a)
+            R += float(r)
+            done = bool(term) or bool(trunc)
+            steps += 1
+        returns.append(R)
+    mean_R = sum(returns) / max(1, len(returns))
+    print(f"Eval (raw): mean={mean_R:.2f} episodes={episodes} returns={[round(x,2) for x in returns]}")
+
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--timesteps", type=int, default=1_000_000)
@@ -59,3 +78,8 @@ if __name__ == "__main__":
         model.save(ckpt_path)
         env.save(vecnorm_path)
         print(f"Saved {ckpt_path} at {total:,} steps")
+        # Quick raw evaluation (unnormalized rewards)
+        try:
+            eval_policy(model, episodes=3)
+        except Exception as e:
+            print(f"Eval failed: {e}")
