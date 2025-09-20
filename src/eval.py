@@ -20,7 +20,7 @@ def run(model_path, episodes=3, render=False):
             done = term
             if render:
                 renderer.draw_snapshot(show=True)
-                time.sleep(1/25.0)
+                time.sleep(1/10.0)
         print(f"Episode {ep+1}: return blue={R:.2f}")
         print([h["tag"] for h in env.world.history[:12]])
         print([h["tag"] for h in env.world.history[-12:]])

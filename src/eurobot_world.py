@@ -4,6 +4,7 @@ from enum import IntEnum
 from typing import List, Optional, Tuple, Callable, Dict
 import numpy as np
 from robot import RobotProfile, RobotState, Verb
+from policies import GreedyStashPolicy
 
 # --------- Rules / scoring (tune here) ----------
 P1_NEST       = 2         # + per counted crate in BLUE nest (cap)
@@ -61,7 +62,7 @@ def build_nodes() -> List[Node]:
         nodes.append(Node(k, PICKUPS_POS[k].astype(np.float32), NodeType.PICKUP))
     return nodes
 
-# --------- Colors (no SIMA/rotten) ----------
+# --------- Colors ----------
 class Col(IntEnum):
     BLUE=0; YELLOW=1; NEUTRAL=2
 
@@ -91,8 +92,7 @@ class EurobotWorld:
         self.blue_prof   = blue_profile
         self.yellow_prof = yellow_profile
 
-        # simple default policies; you can inject others from policies.py
-        from policies import GreedyStashPolicy
+        # TODO: move this in __init__ args
         self.yellow_policy = GreedyStashPolicy()
 
         self.allow_steal = ALLOW_STEAL
@@ -121,7 +121,7 @@ class EurobotWorld:
         self.pickups[:, Col.BLUE]   = 2
         self.pickups[:, Col.YELLOW] = 2
 
-        self.nest_blue_counted = 0
+        self.nest_blue_counted = 0 # ?
 
         # episode history for renderer (list of shallow snapshots)
         self.history: List[Dict] = []
@@ -333,8 +333,11 @@ class EurobotWorld:
             blue = int(self.pantries[k, Col.BLUE])
             yell = int(self.pantries[k, Col.YELLOW])
             if blue > yell: bonus += P3_INTEREST
+        if int(self.blue.node) == self.NEST_BLUE:
+            bonus += P1_NEST
         return bonus
 
+    #TODO move this somewhere else
     # ----- helpers -----
     def _snap(self, tag: str):
         # return # slows down learning 
@@ -356,16 +359,6 @@ class EurobotWorld:
     def _pickup_avail(self, node: int, color: int) -> int:
         idx = self.pickup_idx[node]
         return 0 if idx == -1 else int(self.pickups[idx, color])
-
-    def _best_pantry_for_yellow(self) -> int:
-        scores=[]
-        for k,i in enumerate(self.PANTRIES):
-            y = int(self.pantries[k, Col.YELLOW]); b = int(self.pantries[k, Col.BLUE])
-            margin = (y+1) - b
-            dist = float(self.D[self.yellow.node, i])
-            scores.append((1.5*margin - 0.5*dist, i))
-        scores.sort(reverse=True, key=lambda t:t[0])
-        return scores[0][1] if scores else self.PANTRIES[0]
     
     # --- policy helpers (thin wrappers) ---
     def pickup_avail(self, node: int, color: int) -> int:
