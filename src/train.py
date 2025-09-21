@@ -1,6 +1,6 @@
 import os, argparse
 from stable_baselines3 import PPO
-from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize
+from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize, DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
 from gymnasium.wrappers import TimeLimit
 import torch
@@ -71,7 +71,7 @@ if __name__ == "__main__":
         pantry_idx=pantry_idx, pickup_idx=pickup_idx,
     )
 
-    env = SubprocVecEnv(env_fns)
+    env = DummyVecEnv(env_fns)
 
     # Discrete counts → keep norm_obs=False; norm_reward=True is fine.
     vecnorm_path = "runs/vecnorm.pkl"
@@ -86,9 +86,9 @@ if __name__ == "__main__":
         model = PPO.load(ckpt_path, env=env, device="auto")
     else:
         model = PPO(MaskedMultiCatPolicy, env,
-              n_steps=4096, batch_size=36864,
+              n_steps=2048, batch_size=36864,
               ent_coef=0.01, learning_rate=3e-4,
-              gamma=0.995, clip_range=0.2, n_epochs=5,
+              gamma=0.995, clip_range=0.2, n_epochs=2,
               tensorboard_log="runs/tb",
               policy_kwargs={"mask_cfg": mask_cfg})
 
