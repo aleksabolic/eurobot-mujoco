@@ -8,3 +8,4 @@ tqdm>=4.66
 tensorboard
 rich
 opencv-python
+pytest>=8.0

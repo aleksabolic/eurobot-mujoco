@@ -6,6 +6,7 @@ from gymnasium.wrappers import TimeLimit
 import torch
 from eurobot_env import EurobotDiscreteEnv
 from robot import RobotProfile
+from masked_policy import MaskedMultiCatPolicy
 
 torch.set_num_threads(1)
 try: torch.set_num_interop_threads(1)
@@ -50,6 +51,26 @@ if __name__ == "__main__":
 
     os.makedirs("runs", exist_ok=True)
     env_fns = [make_env_i(i) for i in range(N)]
+
+    # fetch sizes from a single env
+    _tmp = EurobotDiscreteEnv()
+    K = len(_tmp.world.PANTRIES)
+    M = len(_tmp.world.PICKUPS)
+    n_nodes = _tmp.n_nodes
+    max_qty = _tmp.max_qty
+    capacity = int(_tmp.world.blue_prof.capacity)
+    allow_steal = bool(_tmp.world.allow_steal)
+    can_flip = bool(_tmp.world.blue_prof.can_flip)
+    # build node->local index lookups (length n_nodes)
+    pantry_idx = _tmp.world.pantry_idx.tolist()
+    pickup_idx = _tmp.world.pickup_idx.tolist()
+    del _tmp
+    mask_cfg = dict(
+        n_pantries=K, n_pickups=M, n_nodes=n_nodes, max_qty=max_qty,
+        capacity=capacity, allow_steal=allow_steal, can_flip=can_flip,
+        pantry_idx=pantry_idx, pickup_idx=pickup_idx,
+    )
+
     env = SubprocVecEnv(env_fns)
 
     # Discrete counts → keep norm_obs=False; norm_reward=True is fine.
@@ -64,11 +85,12 @@ if __name__ == "__main__":
     if args.resume and os.path.exists(ckpt_path):
         model = PPO.load(ckpt_path, env=env, device="auto")
     else:
-        model = PPO("MlpPolicy", env,
-                    n_steps=4096, batch_size=36864,
-                    ent_coef=0.01, learning_rate=3e-4,
-                    gamma=0.995, clip_range=0.2, n_epochs=5,
-                    tensorboard_log="runs/tb")
+        model = PPO(MaskedMultiCatPolicy, env,
+              n_steps=4096, batch_size=36864,
+              ent_coef=0.01, learning_rate=3e-4,
+              gamma=0.995, clip_range=0.2, n_epochs=5,
+              tensorboard_log="runs/tb",
+              policy_kwargs={"mask_cfg": mask_cfg})
 
     total = 0
     while total < args.timesteps:

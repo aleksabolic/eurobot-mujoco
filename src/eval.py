@@ -4,10 +4,11 @@ from eurobot_env import EurobotDiscreteEnv
 from eurobot_render import EurobotCV2Renderer
 from robot import RobotProfile
 import time
+from masked_policy import MaskedMultiCatPolicy
 
 def run(model_path, episodes=3, render=False):
     env = EurobotDiscreteEnv()
-    model = PPO.load(model_path, device="auto")
+    model = PPO.load(model_path, device="auto", custom_objects={"policy_class": MaskedMultiCatPolicy})
     renderer = EurobotCV2Renderer(env.world, size=(1000, 700)) 
     for ep in range(episodes):
         o, _ = env.reset()
