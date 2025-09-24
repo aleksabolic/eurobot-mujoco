@@ -55,3 +55,4 @@ cymj.c
 .python-version
 /build
 /runs
+.pytest_cache
