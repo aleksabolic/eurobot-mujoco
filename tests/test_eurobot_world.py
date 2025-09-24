@@ -7,13 +7,12 @@ from eurobot_world import (
     EurobotWorld,
     build_nodes,
     Col,
-    INVALID_ACT_PENALTY,
     PANTRY_CAP,
-    P1_NEST,
-    P2_PANTRY,
-    P3_INTEREST,
 )
+from rewards import DEFAULT_REWARD_CONFIG
 from robot import Verb
+
+REWARDS = DEFAULT_REWARD_CONFIG
 
 
 class WaitPolicy:
@@ -73,7 +72,7 @@ def test_move_and_idle_penalty(world):
 
     # idle move -> immediate penalty
     idle_reward, done = world.step_blue((int(Verb.MOVE), target, 0, 0))
-    assert idle_reward <= -INVALID_ACT_PENALTY
+    assert idle_reward <= -REWARDS.invalid_action_penalty
 
 
 def test_pick_success_and_empty_penalty(world):
@@ -118,7 +117,7 @@ def test_place_to_pantry_and_nest(world):
     _drain_events(world)
     reward_pan, _ = world.step_blue((int(Verb.PLACE), pantry, int(Col.BLUE), 1))
     _drain_events(world)
-    assert reward_pan >= P2_PANTRY - 1.0  # reward minus time penalty
+    assert reward_pan >= REWARDS.pantry_bonus - 1.0  # reward minus time penalty
     assert world.pantries[world.pantry_idx[pantry], Col.BLUE] == 1
     assert world.blue.inv[Col.BLUE] == 1
 
@@ -127,13 +126,13 @@ def test_place_to_pantry_and_nest(world):
     _drain_events(world)
     reward_nest, _ = world.step_blue((int(Verb.PLACE), nest, int(Col.BLUE), 1))
     _drain_events(world)
-    assert reward_nest >= P1_NEST - 1.0
+    assert reward_nest >= REWARDS.nest_bonus - 1.0
     assert world.nest_blue_counted == 1
     assert world.blue.inv[Col.BLUE] == 0
 
     # placing with empty inventory → penalty
     penalty, _ = world.step_blue((int(Verb.PLACE), nest, int(Col.BLUE), 1))
-    assert penalty <= -INVALID_ACT_PENALTY
+    assert penalty <= -REWARDS.invalid_action_penalty
 
 
 def test_flip_changes_inventory(world):
@@ -185,7 +184,7 @@ def test_wait_penalty(world):
     _set_wait_policy(world)
     world.reset(seed=5)
     reward, _ = world.step_blue((int(Verb.WAIT), world.blue.node, 0, 1))
-    assert reward <= -INVALID_ACT_PENALTY
+    assert reward <= -REWARDS.invalid_action_penalty
 
 
 def test_terminal_bonus(world):
@@ -195,7 +194,7 @@ def test_terminal_bonus(world):
     world.pantries[idx, Col.YELLOW] = 1
     world.blue.node = world.NEST_BLUE
     bonus = world._terminal_bonus()
-    assert bonus == P3_INTEREST + P1_NEST
+    assert bonus == REWARDS.interest_bonus + REWARDS.nest_bonus
 
 
 def test_helper_queries(world):

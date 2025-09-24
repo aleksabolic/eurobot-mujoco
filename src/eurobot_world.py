@@ -5,17 +5,13 @@ from typing import List, Optional, Tuple, Callable, Dict
 import numpy as np
 from robot import RobotProfile, RobotState, Verb
 from policies import GreedyStashPolicy
+from rewards import RewardConfig, DEFAULT_REWARD_CONFIG
 
-# --------- Rules / scoring (tune here) ----------
-P1_NEST       = 2         # + per counted crate in BLUE nest (cap)
+# --------- Constraints ----------
 NEST_CAP_BLUE = 6
-P2_PANTRY     = 1         # + per valid pantry crate (BLUE or NEUTRAL placed by BLUE)
-P3_INTEREST   = 3         # + per pantry where BLUE has strict BLUE majority at end
-TIME_LIMIT_S  = 100.0     # float seconds
-TIME_PENALTY  = 1e-3      # - per second advanced
 PANTRY_CAP = 8            # max crates per pantry (sum over colors)
+TIME_LIMIT_S  = 100.0     # float seconds
 ALLOW_STEAL = True  
-INVALID_ACT_PENALTY = 0.30  # discourages repeated invalid/empty actions
 
 # --------- Map ----------
 class NodeType(IntEnum):
@@ -82,6 +78,8 @@ class EurobotWorld:
         self.nodes = build_nodes()
         self.N = len(self.nodes)
 
+        self.rewards = DEFAULT_REWARD_CONFIG
+
         XY = np.stack([n.xy for n in self.nodes], axis=0)
         self.D = np.linalg.norm(XY[:,None,:] - XY[None,:,:], axis=-1).astype(np.float32)
 
@@ -139,7 +137,7 @@ class EurobotWorld:
         dt, r_gain = self._advance_until_next()  # dt > 0 when something happens
         r += r_gain
 
-        r -= TIME_PENALTY * dt
+        r -= self.rewards.time_penalty * dt
 
         done = (self.t_left <= 1e-9)
         if done:
@@ -180,7 +178,7 @@ class EurobotWorld:
             # MOVE to same node → treat as invalid idle action
             if verb == Verb.MOVE:
                 if actor_tag == "blue":
-                    r -= INVALID_ACT_PENALTY
+                    r -= self.rewards.invalid_action_penalty
                 self._snap(f"{actor_tag}_move_idle")
                 return r
             did_move = (t_move > 0.0)
@@ -243,7 +241,7 @@ class EurobotWorld:
             idx = self.pickup_idx[node]
             if idx == -1:
                 if actor_tag == "blue":
-                    r -= INVALID_ACT_PENALTY
+                    r -= self.rewards.invalid_action_penalty
                 self._snap(f"{actor_tag}_pick_invalid"); return r
             can_take = int(self.pickups[idx, color])
             # rob.inv is length-3: avoid tiny numpy sum allocation by summing scalars
@@ -257,7 +255,7 @@ class EurobotWorld:
                 self._snap(f"{actor_tag}_pick")
             else:
                 if actor_tag == "blue":
-                    r -= INVALID_ACT_PENALTY
+                    r -= self.rewards.invalid_action_penalty
                 self._snap(f"{actor_tag}_pick_empty")
             return r
 
@@ -266,7 +264,7 @@ class EurobotWorld:
             have = int(rob.inv[color])
             if have <= 0:
                 if actor_tag == "blue":
-                    r -= INVALID_ACT_PENALTY
+                    r -= self.rewards.invalid_action_penalty
                 self._snap(f"{actor_tag}_place_empty")
                 return r
 
@@ -279,11 +277,11 @@ class EurobotWorld:
                     self.pantries[idx, color] += put
                     rob.inv[color]            -= put
                     if actor_tag=="blue" and color in (Col.BLUE, Col.NEUTRAL):
-                        r += P2_PANTRY * put
+                        r += self.rewards.pantry_bonus * put
                     self._snap(f"{actor_tag}_place")
                 else:
                     if actor_tag == "blue":
-                        r -= INVALID_ACT_PENALTY
+                        r -= self.rewards.invalid_action_penalty
                     self._snap(f"{actor_tag}_place_full")
                 return r
 
@@ -293,22 +291,22 @@ class EurobotWorld:
                 if delta > 0:
                     rob.inv[color]         -= delta
                     self.nest_blue_counted += delta
-                    r += P1_NEST * delta
+                    r += self.rewards.nest_bonus * delta
                     self._snap(f"{actor_tag}_place")
                 else:
-                    r -= INVALID_ACT_PENALTY
+                    r -= self.rewards.invalid_action_penalty
                     self._snap(f"{actor_tag}_place_nest_full")
                 return r
 
             if actor_tag == "blue":
-                r -= INVALID_ACT_PENALTY
+                r -= self.rewards.invalid_action_penalty
             self._snap(f"{actor_tag}_place_invalid")
             return r
 
         if verb == Verb.FLIP:
             if not prof.can_flip:
                 if actor_tag == "blue":
-                    r -= INVALID_ACT_PENALTY
+                    r -= self.rewards.invalid_action_penalty
                 self._snap(f"{actor_tag}_flip_blocked"); return r
             # move from most abundant non-target to target
             src_candidates = [Col.BLUE, Col.YELLOW, Col.NEUTRAL]
@@ -317,7 +315,7 @@ class EurobotWorld:
             k = min(qty, int(rob.inv[src]))
             if k <= 0:
                 if actor_tag == "blue":
-                    r -= INVALID_ACT_PENALTY
+                    r -= self.rewards.invalid_action_penalty
                 self._snap(f"{actor_tag}_flip_empty")
                 return r
             rob.inv[src]   -= k
@@ -328,12 +326,12 @@ class EurobotWorld:
         if verb == Verb.STEAL:
             if not self.allow_steal:
                 if actor_tag == "blue":
-                    r -= INVALID_ACT_PENALTY
+                    r -= self.rewards.invalid_action_penalty
                 self._snap(f"{actor_tag}_steal_blocked"); return r
             idx = self.pantry_idx[node]
             if idx == -1:
                 if actor_tag == "blue":
-                    r -= INVALID_ACT_PENALTY
+                    r -= self.rewards.invalid_action_penalty
                 self._snap(f"{actor_tag}_steal_invalid"); return r
             have = int(self.pantries[idx, color])
             inv0 = int(rob.inv[0]); inv1 = int(rob.inv[1]); inv2 = int(rob.inv[2])
@@ -346,13 +344,13 @@ class EurobotWorld:
                 self._snap(f"{actor_tag}_steal")
             else:
                 if actor_tag == "blue":
-                    r -= INVALID_ACT_PENALTY
+                    r -= self.rewards.invalid_action_penalty
                 self._snap(f"{actor_tag}_steal_empty")
             return r
 
         if verb == Verb.WAIT:
             if actor_tag == "blue":
-                r -= INVALID_ACT_PENALTY
+                r -= self.rewards.invalid_action_penalty
             self._snap(f"{actor_tag}_wait")
             return r
 
@@ -364,9 +362,9 @@ class EurobotWorld:
         for k,_ in enumerate(self.PANTRIES):
             blue = int(self.pantries[k, Col.BLUE])
             yell = int(self.pantries[k, Col.YELLOW])
-            if blue > yell: bonus += P3_INTEREST
+            if blue > yell: bonus += self.rewards.interest_bonus
         if int(self.blue.node) == self.NEST_BLUE:
-            bonus += P1_NEST
+            bonus += self.rewards.nest_bonus
         return bonus
 
     #TODO move this somewhere else

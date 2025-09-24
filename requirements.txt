@@ -8,4 +8,5 @@ tqdm>=4.66
 tensorboard
 rich
 opencv-python
+imageio>=2.34
 pytest>=8.0
