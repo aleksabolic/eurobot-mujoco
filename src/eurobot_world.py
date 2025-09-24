@@ -8,7 +8,7 @@ from policies import GreedyStashPolicy
 from rewards import RewardConfig, DEFAULT_REWARD_CONFIG
 
 # --------- Constraints ----------
-NEST_CAP_BLUE = 6
+NEST_CAP_BLUE = 6         # max crates per nest
 PANTRY_CAP = 8            # max crates per pantry (sum over colors)
 TIME_LIMIT_S  = 100.0     # float seconds
 ALLOW_STEAL = True  
@@ -73,12 +73,13 @@ class EurobotWorld:
     def __init__(self,
                  blue_profile: RobotProfile,
                  yellow_profile: RobotProfile,
-                 seed: Optional[int]=None):
+                 seed: Optional[int]=None,
+                 rewards: RewardConfig = DEFAULT_REWARD_CONFIG):
         self.rng = np.random.default_rng(seed)
         self.nodes = build_nodes()
         self.N = len(self.nodes)
 
-        self.rewards = DEFAULT_REWARD_CONFIG
+        self.rewards = rewards
 
         XY = np.stack([n.xy for n in self.nodes], axis=0)
         self.D = np.linalg.norm(XY[:,None,:] - XY[None,:,:], axis=-1).astype(np.float32)
