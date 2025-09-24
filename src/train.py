@@ -1,4 +1,5 @@
 import os, argparse
+import numpy as np
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize, DummyVecEnv
 from stable_baselines3.common.monitor import Monitor
@@ -7,6 +8,7 @@ import torch
 from eurobot_env import EurobotDiscreteEnv
 from robot import RobotProfile
 from masked_policy import MaskedMultiCatPolicy
+from stable_baselines3.common.callbacks import BaseCallback
 
 torch.set_num_threads(1)
 try: torch.set_num_interop_threads(1)
@@ -14,6 +16,44 @@ except: pass
 
 N = 18
 CPU_IDS = list(range(N))
+
+class FinalScoreCallback(BaseCallback):
+    def __init__(self, verbose: int = 0):
+        super().__init__(verbose)
+        self._blue_scores = []
+        self._yellow_scores = []
+
+    def _on_step(self) -> bool:
+        infos = self.locals.get("infos", ())
+        for info in infos:
+            if not info:
+                continue
+            if "blue_final_score" in info and "yellow_final_score" in info:
+                self._blue_scores.append(float(info["blue_final_score"]))
+                self._yellow_scores.append(float(info["yellow_final_score"]))
+        return True
+
+    def _on_rollout_end(self) -> None:
+        if self._blue_scores:
+            self.logger.record(
+                "rollout/blue_final_score_mean",
+                float(np.mean(self._blue_scores)),
+            )
+            self.logger.record(
+                "rollout/blue_final_score_std",
+                float(np.std(self._blue_scores)),
+            )
+        if self._yellow_scores:
+            self.logger.record(
+                "rollout/yellow_final_score_mean",
+                float(np.mean(self._yellow_scores)),
+            )
+            self.logger.record(
+                "rollout/yellow_final_score_std",
+                float(np.std(self._yellow_scores)),
+            )
+        self._blue_scores.clear()
+        self._yellow_scores.clear()
 
 def make_env_i(i):
     def _thunk():
@@ -27,21 +67,36 @@ def make_env_i(i):
 def eval_policy(model, episodes: int = 3, max_steps: int = 1000):
     """Deterministic evaluation on raw (unnormalized) env to print true returns."""
     env = EurobotDiscreteEnv()
-    returns = []
+    rl_returns = []
+    score_blue = []
+    score_yellow = []
     for ep in range(episodes):
         o, _ = env.reset()
         done = False
-        R = 0.0
+        Rb = 0.0
         steps = 0
         while not done and steps < max_steps:
             a, _ = model.predict(o, deterministic=True)
-            o, r, term, trunc, _ = env.step(a)
-            R += float(r)
+            o, r, term, trunc, info = env.step(a)
+            Rb += float(r)
             done = bool(term) or bool(trunc)
             steps += 1
-        returns.append(R)
-    mean_R = sum(returns) / max(1, len(returns))
-    print(f"Eval (raw): mean={mean_R:.2f} episodes={episodes} returns={[round(x,2) for x in returns]}")
+    
+        blue_score, yellow_score = env.world.final_scores()
+        rl_returns.append(Rb)
+        score_blue.append(blue_score)
+        score_yellow.append(yellow_score)
+    mean_rl = sum(rl_returns) / max(1, len(rl_returns))
+    mean_blue_score = sum(score_blue) / max(1, len(score_blue))
+    mean_yellow_score = sum(score_yellow) / max(1, len(score_yellow))
+    print(
+        "Eval (raw): "
+        f"mean_rl_return={mean_rl:.2f} mean_blue_score={mean_blue_score:.2f} "
+        f"mean_yellow_score={mean_yellow_score:.2f} episodes={episodes}"
+        f" rl_returns={[round(x,2) for x in rl_returns]}"
+        f" blue_scores={[round(x,2) for x in score_blue]}"
+        f" yellow_scores={[round(x,2) for x in score_yellow]}"
+    )
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
@@ -99,8 +154,9 @@ if __name__ == "__main__":
 
     total = 0
     while total < args.timesteps:
+        callback = FinalScoreCallback()
         model.learn(total_timesteps=100_000, reset_num_timesteps=False,
-                    progress_bar=True, tb_log_name=tb_log_name)
+                    progress_bar=True, tb_log_name=tb_log_name, callback=callback)
         total += 100_000
         model.save(ckpt_path)
         env.save(vecnorm_path)

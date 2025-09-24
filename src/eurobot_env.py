@@ -49,7 +49,13 @@ class EurobotDiscreteEnv(gym.Env):
     def step(self, action: np.ndarray):
         v, n, c, q = map(int, action)
         r, done = self.world.step_blue((v, n, c, q))
-        return self._obs(), float(r), bool(done), False, {}
+        info = {}
+        done_flag = bool(done)
+        if done_flag:
+            blue_final, yellow_final = self.world.final_scores()
+            info["blue_final_score"] = float(blue_final)
+            info["yellow_final_score"] = float(yellow_final)
+        return self._obs(), float(r), done_flag, False, info
 
     def _obs(self):
         w = self.world

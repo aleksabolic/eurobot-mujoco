@@ -196,6 +196,27 @@ def test_terminal_bonus(world):
     bonus = world._terminal_bonus()
     assert bonus == REWARDS.interest_bonus + REWARDS.finish_in_nest_bonus
 
+    blue_score, yellow_score = world.final_scores()
+    assert blue_score == pytest.approx(
+        REWARDS.pantry_bonus * 2
+        + REWARDS.interest_bonus
+        + REWARDS.finish_in_nest_bonus
+    )
+    # yellow robot stayed in its nest after reset
+    assert yellow_score == pytest.approx(
+        REWARDS.pantry_bonus * 1 + REWARDS.finish_in_nest_bonus
+    )
+
+
+def test_yellow_nest_counts(world):
+    _set_wait_policy(world)
+    world.reset(seed=8)
+    world.yellow.inv[Col.YELLOW] = 1
+    world._finish_event("yellow", int(Verb.PLACE), world.NEST_YELL, int(Col.YELLOW), 1, False, 0.0)
+    assert world.nest_yellow_counted == 1
+    _, yellow_score = world.final_scores()
+    assert yellow_score >= REWARDS.nest_bonus
+
 
 def test_helper_queries(world):
     world.reset(seed=7)

@@ -20,12 +20,14 @@ def run(model_path, episodes=3, render=False, fps=1.0, gif_path=None):
     for ep in range(episodes):
         o, _ = env.reset()
         done = False
-        R = 0.0
+        rl_return = 0.0
+        blue_score = None
+        yellow_score = None
         frames = [] if gif_path else None
         while not done:
             a, _ = model.predict(o, deterministic=True)
-            o, r, term, trunc, _ = env.step(a)
-            R += r
+            o, r, term, _, _ = env.step(a)
+            rl_return += r
             done = term
             if render or gif_path:
                 img_bgr = renderer.draw_snapshot(show=render)
@@ -33,7 +35,12 @@ def run(model_path, episodes=3, render=False, fps=1.0, gif_path=None):
                     frames.append(cv2.cvtColor(img_bgr, cv2.COLOR_BGR2RGB))
                 if render:
                     time.sleep(1/max(fps,1))
-        print(f"Episode {ep+1}: return blue={R:.2f}")
+    
+        blue_score, yellow_score = env.world.final_scores()
+        print(
+            f"Episode {ep+1}: rl_return_blue={rl_return:.2f} "
+            f"score_blue={blue_score:.2f} score_yellow={yellow_score:.2f}"
+        )
         print([h["tag"] for h in env.world.history[:12]])
         print([h["tag"] for h in env.world.history[-12:]])
         if frames is not None:

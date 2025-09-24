@@ -89,6 +89,17 @@ def test_custom_reward_config_applied():
     world.blue.node = nest
     assert world._terminal_bonus() == pytest.approx(cfg.interest_bonus + cfg.finish_in_nest_bonus)
 
+    blue_score, yellow_score = world.final_scores()
+    assert blue_score == pytest.approx(
+        cfg.pantry_bonus * 2
+        + cfg.nest_bonus * 1
+        + cfg.interest_bonus
+        + cfg.finish_in_nest_bonus
+    )
+    assert yellow_score == pytest.approx(
+        cfg.pantry_bonus * 1 + cfg.finish_in_nest_bonus
+    )
+
 
 def test_pick_respects_capacity_and_max_qty():
     world = _make_world(blue_override=dict(capacity=3, max_action_qty=4))

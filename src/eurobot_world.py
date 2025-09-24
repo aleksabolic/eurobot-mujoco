@@ -121,7 +121,8 @@ class EurobotWorld:
         self.pickups[:, Col.BLUE]   = 2
         self.pickups[:, Col.YELLOW] = 2
 
-        self.nest_blue_counted = 0 # ?
+        self.nest_blue_counted = 0 
+        self.nest_yellow_counted = 0
 
         # episode history for renderer (list of shallow snapshots)
         self.history: List[Dict] = []
@@ -299,6 +300,16 @@ class EurobotWorld:
                     self._snap(f"{actor_tag}_place_nest_full")
                 return r
 
+            if actor_tag=="yellow" and node == self.NEST_YELL:
+                put = max(0, min(qty, have))
+                if put > 0:
+                    rob.inv[color]          -= put
+                    self.nest_yellow_counted += put
+                    self._snap(f"{actor_tag}_place")
+                else:
+                    self._snap(f"{actor_tag}_place_nest_full")
+                return r
+
             if actor_tag == "blue":
                 r -= self.rewards.invalid_action_penalty
             self._snap(f"{actor_tag}_place_invalid")
@@ -367,6 +378,33 @@ class EurobotWorld:
         if int(self.blue.node) == self.NEST_BLUE:
             bonus += self.rewards.finish_in_nest_bonus
         return bonus
+
+    def final_scores(self) -> Tuple[float, float]:
+        blue_score = 0.0
+        yellow_score = 0.0
+
+        blue_pantry = int(self.pantries[:, Col.BLUE].sum()) if self.pantries.size else 0
+        yellow_pantry = int(self.pantries[:, Col.YELLOW].sum()) if self.pantries.size else 0
+        blue_score += self.rewards.pantry_bonus * blue_pantry
+        yellow_score += self.rewards.pantry_bonus * yellow_pantry
+
+        blue_score += self.rewards.nest_bonus * int(self.nest_blue_counted)
+        yellow_score += self.rewards.nest_bonus * int(self.nest_yellow_counted)
+
+        for row in self.pantries:
+            b = int(row[Col.BLUE])
+            y = int(row[Col.YELLOW])
+            if b > y:
+                blue_score += self.rewards.interest_bonus
+            elif y > b:
+                yellow_score += self.rewards.interest_bonus
+
+        if int(self.blue.node) == self.NEST_BLUE:
+            blue_score += self.rewards.finish_in_nest_bonus
+        if int(self.yellow.node) == self.NEST_YELL:
+            yellow_score += self.rewards.finish_in_nest_bonus
+
+        return float(blue_score), float(yellow_score)
 
     #TODO move this somewhere else
     # ----- helpers -----

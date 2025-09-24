@@ -42,13 +42,15 @@ def test_step_move_then_pick(env):
     env.reset(seed=1)
     pickup = env.world.PICKUPS[0]
     # move
-    obs, reward, done, _, _ = env.step(np.array([Verb.MOVE, pickup, Col.BLUE, 0]))
+    obs, reward, done, _, info = env.step(np.array([Verb.MOVE, pickup, Col.BLUE, 0]))
+    assert info == {}
     _drain_env(env)
     obs = env._obs()
     assert not done
     assert env.world.blue.node == pickup
     # pick
-    obs, reward, done, _, _ = env.step(np.array([Verb.PICK, pickup, Col.BLUE, 1]))
+    obs, reward, done, _, info = env.step(np.array([Verb.PICK, pickup, Col.BLUE, 1]))
+    assert info == {}
     _drain_env(env)
     obs = env._obs()
     assert env.world.blue.inv[Col.BLUE] >= 1
@@ -58,6 +60,8 @@ def test_step_move_then_pick(env):
 def test_done_when_time_runs_out(env):
     env.reset(seed=2)
     env.world.t_left = 0.0
-    obs, reward, done, _, _ = env.step(np.array([Verb.WAIT, env.world.blue.node, Col.BLUE, 0]))
+    obs, reward, done, _, info = env.step(np.array([Verb.WAIT, env.world.blue.node, Col.BLUE, 0]))
     assert done
     assert reward >= -10.0  # should include terminal bonus or penalty
+    assert "blue_final_score" in info
+    assert "yellow_final_score" in info
