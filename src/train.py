@@ -45,11 +45,15 @@ def eval_policy(model, episodes: int = 3, max_steps: int = 1000):
 
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
-    ap.add_argument("--timesteps", type=int, default=1_000_000)
+    ap.add_argument("--timesteps", type=int, default=100_000)
     ap.add_argument("--resume", action="store_true")
+    ap.add_argument("--ckpt", type=str, default="runs/ppo_blue_last.zip", help="Path used to load/save PPO checkpoints",)
     args = ap.parse_args()       
 
     os.makedirs("runs", exist_ok=True)
+    ckpt_dir = os.path.dirname(args.ckpt)
+    if ckpt_dir:
+        os.makedirs(ckpt_dir, exist_ok=True)
     env_fns = [make_env_i(i) for i in range(N)]
 
     # fetch sizes from a single env
@@ -81,7 +85,8 @@ if __name__ == "__main__":
     else:
         env = VecNormalize(env, norm_obs=False, norm_reward=True, clip_obs=10.0)
 
-    ckpt_path = "runs/ppo_blue_last.zip"
+    ckpt_path = args.ckpt
+    tb_log_name = os.path.splitext(os.path.basename(ckpt_path))[0] or "ppo"
     if args.resume and os.path.exists(ckpt_path):
         model = PPO.load(ckpt_path, env=env, device="auto")
     else:
@@ -95,7 +100,7 @@ if __name__ == "__main__":
     total = 0
     while total < args.timesteps:
         model.learn(total_timesteps=100_000, reset_num_timesteps=False,
-                    progress_bar=True, tb_log_name="ppo_discrete")
+                    progress_bar=True, tb_log_name=tb_log_name)
         total += 100_000
         model.save(ckpt_path)
         env.save(vecnorm_path)
