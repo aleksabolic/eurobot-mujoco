@@ -9,7 +9,7 @@ class RewardConfig:
     interest_bonus: float = 3.0          # + per pantry where BLUE has strict BLUE majority at end
     time_penalty: float = 1e-3           # - per second advanced
     invalid_action_penalty: float = 0.30 # discourages repeated invalid/empty actions
+    finish_in_nest_bonus: float = 1.0    # + bonus when episode ends with BLUE inside its nest
 
 
 DEFAULT_REWARD_CONFIG = RewardConfig()
-

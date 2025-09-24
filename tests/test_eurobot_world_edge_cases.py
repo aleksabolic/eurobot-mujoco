@@ -49,6 +49,7 @@ def test_custom_reward_config_applied():
         interest_bonus=11.0,
         time_penalty=0.0,
         invalid_action_penalty=1.23,
+        finish_in_nest_bonus=4.5,
     )
     world = _make_world(rewards=cfg)
     assert world.rewards is cfg
@@ -86,7 +87,7 @@ def test_custom_reward_config_applied():
     world.pantries[idx_pan, Col.BLUE] = 2
     world.pantries[idx_pan, Col.YELLOW] = 1
     world.blue.node = nest
-    assert world._terminal_bonus() == pytest.approx(cfg.interest_bonus + cfg.nest_bonus)
+    assert world._terminal_bonus() == pytest.approx(cfg.interest_bonus + cfg.finish_in_nest_bonus)
 
 
 def test_pick_respects_capacity_and_max_qty():

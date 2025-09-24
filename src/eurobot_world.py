@@ -365,7 +365,7 @@ class EurobotWorld:
             yell = int(self.pantries[k, Col.YELLOW])
             if blue > yell: bonus += self.rewards.interest_bonus
         if int(self.blue.node) == self.NEST_BLUE:
-            bonus += self.rewards.nest_bonus
+            bonus += self.rewards.finish_in_nest_bonus
         return bonus
 
     #TODO move this somewhere else

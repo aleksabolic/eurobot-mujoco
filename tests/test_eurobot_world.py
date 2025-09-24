@@ -194,7 +194,7 @@ def test_terminal_bonus(world):
     world.pantries[idx, Col.YELLOW] = 1
     world.blue.node = world.NEST_BLUE
     bonus = world._terminal_bonus()
-    assert bonus == REWARDS.interest_bonus + REWARDS.nest_bonus
+    assert bonus == REWARDS.interest_bonus + REWARDS.finish_in_nest_bonus
 
 
 def test_helper_queries(world):
