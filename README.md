@@ -2,6 +2,8 @@
 
 Fast simulator for experimenting with Eurobot match tactics. The repo provides a discrete Gym environment, PPO training loop, scripted opponent policy, and utilities for playback/rendering.
 
+![gif](demo.gif)
+
 ## Setup
 
 ```bash
