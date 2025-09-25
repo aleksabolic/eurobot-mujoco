@@ -101,14 +101,27 @@ def eval_policy(model, episodes: int = 3, max_steps: int = 1000):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--timesteps", type=int, default=100_000)
-    ap.add_argument("--resume", action="store_true")
-    ap.add_argument("--ckpt", type=str, default="runs/ppo_blue_last.zip", help="Path used to load/save PPO checkpoints",)
-    args = ap.parse_args()       
+    ap.add_argument("--load-ckpt", type=str, help="Checkpoint to load before training")
+    ap.add_argument("--save-ckpt", type=str, default="runs/ppo_blue_last.zip",
+                    help="Checkpoint path to save after training")
+    ap.add_argument("--load-vecnorm", type=str, help="VecNormalize file to load before training")
+    ap.add_argument("--save-vecnorm", type=str, default="runs/vecnorm.pkl",
+                    help="VecNormalize path to save after training")
+    args = ap.parse_args()
 
     os.makedirs("runs", exist_ok=True)
-    ckpt_dir = os.path.dirname(args.ckpt)
+    save_ckpt = args.save_ckpt
+    save_vecnorm = args.save_vecnorm
+    load_ckpt = args.load_ckpt or save_ckpt
+    load_vecnorm = args.load_vecnorm or save_vecnorm
+
+    ckpt_dir = os.path.dirname(save_ckpt)
     if ckpt_dir:
         os.makedirs(ckpt_dir, exist_ok=True)
+    vecnorm_dir = os.path.dirname(save_vecnorm)
+    if vecnorm_dir:
+        os.makedirs(vecnorm_dir, exist_ok=True)
+
     env_fns = [make_env_i(i) for i in range(N)]
 
     # fetch sizes from a single env
@@ -133,17 +146,15 @@ if __name__ == "__main__":
     env = DummyVecEnv(env_fns)
 
     # Discrete counts → keep norm_obs=False; norm_reward=True is fine.
-    vecnorm_path = "runs/vecnorm.pkl"
-    if args.resume and os.path.exists(vecnorm_path):
-        env = VecNormalize.load(vecnorm_path, env)
+    if load_vecnorm and os.path.exists(load_vecnorm):
+        env = VecNormalize.load(load_vecnorm, env)
         env.training, env.norm_reward, env.norm_obs = True, True, False
     else:
         env = VecNormalize(env, norm_obs=False, norm_reward=True, clip_obs=10.0)
 
-    ckpt_path = args.ckpt
-    tb_log_name = os.path.splitext(os.path.basename(ckpt_path))[0] or "ppo"
-    if args.resume and os.path.exists(ckpt_path):
-        model = PPO.load(ckpt_path, env=env, device="auto")
+    tb_log_name = os.path.splitext(os.path.basename(save_ckpt))[0] or "ppo"
+    if load_ckpt and os.path.exists(load_ckpt):
+        model = PPO.load(load_ckpt, env=env, device="auto")
     else:
         model = PPO(MaskedMultiCatPolicy, env,
               n_steps=2048, batch_size=36864,
@@ -158,9 +169,9 @@ if __name__ == "__main__":
         model.learn(total_timesteps=100_000, reset_num_timesteps=False,
                     progress_bar=True, tb_log_name=tb_log_name, callback=callback)
         total += 100_000
-        model.save(ckpt_path)
-        env.save(vecnorm_path)
-        print(f"Saved {ckpt_path} at {total:,} steps")
+        model.save(save_ckpt)
+        env.save(save_vecnorm)
+        print(f"Saved {save_ckpt} at {total:,} steps")
         # Quick raw evaluation (unnormalized rewards)
         try:
             eval_policy(model, episodes=3)
