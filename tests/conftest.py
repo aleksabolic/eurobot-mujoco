@@ -50,6 +50,8 @@ def mask_cfg(world, robot_profiles):
         can_flip=bool(blue_prof.can_flip),
         pantry_idx=world.pantry_idx.tolist(),
         pickup_idx=world.pickup_idx.tolist(),
+        pantry_nodes=world.PANTRIES,
+        pickup_nodes=world.PICKUPS,
         nest_blue=world.NEST_BLUE,
         nest_yellow=world.NEST_YELL,
     )

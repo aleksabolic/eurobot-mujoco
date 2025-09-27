@@ -152,6 +152,8 @@ if __name__ == "__main__":
         can_flip=can_flip,
         pantry_idx=pantry_idx,
         pickup_idx=pickup_idx,
+        pantry_nodes=tmp_world.PANTRIES,
+        pickup_nodes=tmp_world.PICKUPS,
         nest_blue=nest_blue,
         nest_yellow=nest_yellow,
     )

@@ -1,238 +1,359 @@
-# src/masked_policy.py
+from __future__ import annotations
+
+from dataclasses import dataclass
 from typing import Dict, Tuple
+
 import numpy as np
 import torch as th
+from torch.distributions import Categorical
+
 from stable_baselines3.common.policies import ActorCriticPolicy
-from stable_baselines3.common.distributions import MultiCategoricalDistribution
+
 from robot import Verb
 
-BIG_NEG = -1e9  # for masking invalid logits
+BIG_NEG = -1e9
+COLOR_BLUE = 0
+COLOR_YELLOW = 1
+
+
+@dataclass
+class MaskContext:
+    blue_node: th.Tensor
+    inv_b: th.Tensor
+    inv_sum: th.Tensor
+    cap_left: th.Tensor
+    pan: th.Tensor
+    pick: th.Tensor
+    pan_room: th.Tensor
+    pan_sum: th.Tensor
+    pick_sum: th.Tensor
 
 
 class MaskedMultiCatPolicy(ActorCriticPolicy):
-    """
-    MultiDiscrete policy that applies per-head action masks to logits before sampling.
-    Provide env sizes/lookups via policy_kwargs['mask_cfg'] when constructing PPO:
-      mask_cfg = {
-        "n_pantries": K, "n_pickups": M, "n_nodes": n_nodes, "max_qty": max_qty,
-        "capacity": capacity, "pantry_cap": pantry_cap, "allow_steal": True/False,
-        "can_flip": True/False, "nest_blue": nest_node_index, "nest_yellow": nest_node_index,
-        "pantry_idx": list[int] len==n_nodes (local index or -1),
-        "pickup_idx": list[int] len==n_nodes (local index or -1),
-      }
-    Obs layout (EurobotDiscreteEnv._obs):
-      [ t_left*10, blue_node, yellow_node,
-        blue_inv(n_colors), yellow_inv(n_colors),
-        pantries(n_colors*K), pickups(n_colors*M) ]
-    """
+    """Branched masked policy that samples actions sequentially with verb-dependent masks."""
 
     def __init__(self, *args, **kwargs):
         self.mask_cfg: Dict = kwargs.pop("mask_cfg")
         super().__init__(*args, **kwargs)
 
-        # Action heads
         nvec = np.array(self.action_space.nvec, dtype=np.int64)
         self.register_buffer("nvec", th.as_tensor(nvec, dtype=th.long))
         self.param_dim = int(nvec.sum())
         assert self.action_net.out_features == self.param_dim
-        self.dist: MultiCategoricalDistribution = self.action_dist  # type: ignore
+        self.n_verbs = int(nvec[0])
+        self.n_nodes = int(nvec[1])
         self.n_colors = int(nvec[2])
+        self.max_qtyp1 = int(nvec[3])
 
-        # Head slices over concatenated logits
-        cuts = np.cumsum(nvec)
-        self.slices = [(int(0 if i == 0 else cuts[i - 1]), int(cuts[i])) for i in range(len(nvec))]
+        # Precompute slices for each action head within concatenated logits
+        head_offsets = []
+        offset = 0
+        for size in nvec:
+            head_offsets.append((int(offset), int(offset + size)))
+            offset += int(size)
+        self.slices = head_offsets  # [(start,end) for verb,node,color,qty]
 
-        # Parse/keep env constants
-        K = int(self.mask_cfg["n_pantries"])
-        M = int(self.mask_cfg["n_pickups"])
-        self.n_nodes = int(self.mask_cfg["n_nodes"])
-        self.n_pantries = K
-        self.n_pickups = M
-        self.max_qtyp1 = int(self.mask_cfg["max_qty"]) + 1
+        # Environment constants
+        self.n_pantries = int(self.mask_cfg.get("n_pantries", 0))
+        self.n_pickups = int(self.mask_cfg.get("n_pickups", 0))
         self.capacity = float(self.mask_cfg.get("capacity", 999))
+        self.pantry_cap = float(self.mask_cfg.get("pantry_cap", 1e9))
         self.allow_steal = bool(self.mask_cfg.get("allow_steal", True))
         self.can_flip = bool(self.mask_cfg.get("can_flip", True))
-        self.pantry_cap = float(self.mask_cfg.get("pantry_cap", 1e9))
         self.nest_blue = int(self.mask_cfg.get("nest_blue", -1))
-        self.nest_yellow = int(self.mask_cfg.get("nest_yellow", -1))
 
-        # Node -> local index (-1 if not that kind)
-        pantry_idx = np.asarray(self.mask_cfg["pantry_idx"], dtype=np.int64)
-        pickup_idx = np.asarray(self.mask_cfg["pickup_idx"], dtype=np.int64)
+        # Lookup buffers
+        pantry_idx = np.asarray(self.mask_cfg.get("pantry_idx", []), dtype=np.int64)
+        pickup_idx = np.asarray(self.mask_cfg.get("pickup_idx", []), dtype=np.int64)
+        pantry_nodes = np.asarray(self.mask_cfg.get("pantry_nodes", []), dtype=np.int64)
+        pickup_nodes = np.asarray(self.mask_cfg.get("pickup_nodes", []), dtype=np.int64)
         self.register_buffer("pantry_idx", th.as_tensor(pantry_idx, dtype=th.long))
         self.register_buffer("pickup_idx", th.as_tensor(pickup_idx, dtype=th.long))
+        self.register_buffer("pantry_nodes", th.as_tensor(pantry_nodes, dtype=th.long))
+        self.register_buffer("pickup_nodes", th.as_tensor(pickup_nodes, dtype=th.long))
 
-        # Obs slices
+        # Observation slices
         i = 0
-        self.sl_t_by = (i, i + 3); i += 3
-        self.sl_inv_b = (i, i + self.n_colors); i += self.n_colors
-        self.sl_inv_y = (i, i + self.n_colors); i += self.n_colors
-        self.sl_pan = (i, i + self.n_colors * K); i += self.n_colors * K
-        self.sl_pick = (i, i + self.n_colors * M); i += self.n_colors * M
+        self.sl_t_by = (i, i + 3)
+        i += 3
+        self.sl_inv_b = (i, i + self.n_colors)
+        i += self.n_colors
+        self.sl_inv_y = (i, i + self.n_colors)
+        i += self.n_colors
+        self.sl_pan = (i, i + self.n_colors * self.n_pantries)
+        i += self.n_colors * self.n_pantries
+        self.sl_pick = (i, i + self.n_colors * self.n_pickups)
 
-    # -------- mask helpers --------
-    @staticmethod
-    def _safe_gather_sum_colors(t_colors: th.Tensor, idx_b: th.Tensor, valid_b: th.Tensor) -> th.Tensor:
-        """
-        t_colors: (B, L, C), idx_b: (B,), valid_b: (B,)
-        Returns (B,) = sum over color at chosen index, 0 if invalid.
-        """
-        B = t_colors.size(0)
-        C = t_colors.size(-1)
-        if C == 0:
-            return th.zeros(B, device=t_colors.device, dtype=t_colors.dtype)
-        idx_safe = th.clamp(idx_b, min=0)
-        out = t_colors.gather(1, idx_safe.view(B, 1, 1).expand(-1, 1, C)).squeeze(1)
-        out = out.sum(dim=1)
-        return out * valid_b
-
-    @staticmethod
-    def _safe_gather_vec_colors(t_colors: th.Tensor, idx_b: th.Tensor, valid_b: th.Tensor) -> th.Tensor:
-        """
-        t_colors: (B, L, C), idx_b: (B,), valid_b: (B,)
-        Returns (B,C) = row at index, zeros if invalid.
-        """
-        B = t_colors.size(0)
-        C = t_colors.size(-1)
-        if C == 0:
-            return th.zeros((B, 0), device=t_colors.device, dtype=t_colors.dtype)
-        idx_safe = th.clamp(idx_b, min=0)
-        out = t_colors.gather(1, idx_safe.view(B, 1, 1).expand(-1, 1, C)).squeeze(1)
-        return out * valid_b.view(B, 1)
-
-    def _build_masks(self, obs: th.Tensor) -> Tuple[th.Tensor, th.Tensor, th.Tensor, th.Tensor]:
-        """
-        Returns masks for heads: (m_verb, m_node, m_color, m_qty)
-        Shapes: (B,n_verbs), (B,n_nodes), (B,n_colors), (B,max_qty+1)
-        """
+    # ---- context helpers -------------------------------------------------
+    def _build_context(self, obs: th.Tensor) -> MaskContext:
         B = obs.shape[0]
         device = obs.device
 
-        # Parse obs
-        blue_node = obs[:, self.sl_t_by[0] + 1].long()  # blue node id
-        inv_b = obs[:, self.sl_inv_b[0]: self.sl_inv_b[1]]  # (B,n_colors)
-        pan_flat = obs[:, self.sl_pan[0]: self.sl_pan[1]]
-        pick_flat = obs[:, self.sl_pick[0]: self.sl_pick[1]]
+        blue_node = obs[:, self.sl_t_by[0] + 1].long()
+        inv_b = obs[:, self.sl_inv_b[0]: self.sl_inv_b[1]]
+        inv_sum = inv_b.sum(dim=1)
+        cap_left = (th.tensor(self.capacity, device=device) - inv_sum).clamp_min(0)
 
-        inv_sum = inv_b.sum(dim=1)                         # (B,)
-        cap_left = (self.capacity - inv_sum).clamp_min(0)  # (B,)
-
-        # Reshape pantries/pickups
-        K = self.n_pantries
-        M = self.n_pickups
-        pan = pan_flat.view(B, K, self.n_colors) if K > 0 else th.zeros((B, 0, self.n_colors), device=device)
-        pick = pick_flat.view(B, M, self.n_colors) if M > 0 else th.zeros((B, 0, self.n_colors), device=device)
-        
-        # Node class at current position
-        at_pantry = self.pantry_idx[blue_node]  # (B,)
-        at_pickup = self.pickup_idx[blue_node]  # (B,)
-        valid_pantry = at_pantry != -1
-        valid_pickup = at_pickup != -1
-        at_blue_nest = blue_node == self.nest_blue
-
-        # Stock sums at current node (0 if invalid)
-        pick_sum = self._safe_gather_sum_colors(pick, at_pickup, valid_pickup) if M > 0 else th.zeros(B, device=device)
-        if K > 0:
-            pan_here = self._safe_gather_vec_colors(pan, at_pantry, valid_pantry)
-            pan_sum = pan_here.sum(dim=1)
-            pan_cap = pan_sum.new_full((B,), float(self.pantry_cap))
-            pan_room = (pan_cap - pan_sum).clamp_min(0)
+        if self.n_pantries > 0:
+            pan_flat = obs[:, self.sl_pan[0]: self.sl_pan[1]]
+            pan = pan_flat.view(B, self.n_pantries, self.n_colors)
+            pan_sum = pan.sum(dim=2)
+            pan_room = (th.tensor(self.pantry_cap, device=device) - pan_sum).clamp_min(0)
         else:
-            pan_sum = th.zeros(B, device=device)
-            pan_here = th.zeros((B, self.n_colors), device=device)
-            pan_room = th.zeros(B, device=device)
+            pan = th.zeros((B, 0, self.n_colors), device=device, dtype=obs.dtype)
+            pan_sum = th.zeros((B, 0), device=device, dtype=obs.dtype)
+            pan_room = th.zeros((B, 0), device=device, dtype=obs.dtype)
 
-        # Verb mask (indices follow robot.Verb enum)
-        n_verbs = int(self.nvec[0].item())
-        m_verb = th.ones((B, n_verbs), dtype=th.bool, device=device)
-        # PICK requires valid pickup, stock, capacity
-        if Verb.PICK < n_verbs:
-            m_verb[:, Verb.PICK] &= valid_pickup & (pick_sum > 0) & (cap_left > 0)
-        # PLACE requires inventory
-        if Verb.PLACE < n_verbs:
-            allow_place_here = valid_pantry & (pan_room > 0)
+        if self.n_pickups > 0:
+            pick_flat = obs[:, self.sl_pick[0]: self.sl_pick[1]]
+            pick = pick_flat.view(B, self.n_pickups, self.n_colors)
+            pick_sum = pick.sum(dim=2)
+        else:
+            pick = th.zeros((B, 0, self.n_colors), device=device, dtype=obs.dtype)
+            pick_sum = th.zeros((B, 0), device=device, dtype=obs.dtype)
+
+        return MaskContext(
+            blue_node=blue_node,
+            inv_b=inv_b,
+            inv_sum=inv_sum,
+            cap_left=cap_left,
+            pan=pan,
+            pick=pick,
+            pan_room=pan_room,
+            pan_sum=pan_sum,
+            pick_sum=pick_sum,
+        )
+
+    def _mask_verb(self, ctx: MaskContext) -> th.Tensor:
+        B = ctx.blue_node.size(0)
+        device = ctx.blue_node.device
+        mask = th.zeros((B, self.n_verbs), dtype=th.bool, device=device)
+
+        mask[:, Verb.MOVE] = True
+        mask[:, Verb.WAIT] = True
+
+        if Verb.PICK < self.n_verbs and self.n_pickups > 0:
+            has_pick = ((ctx.pick_sum > 0) & (ctx.cap_left.view(B, 1) > 0)).any(dim=1)
+            mask[:, Verb.PICK] = has_pick
+
+        if Verb.PLACE < self.n_verbs:
+            has_inventory = ctx.inv_sum > 0
+            pantry_room_any = (self.n_pantries > 0) and (ctx.pan_room > 0).any(dim=1)
+            nest_available = self.nest_blue >= 0
+            mask[:, Verb.PLACE] = has_inventory & (pantry_room_any | nest_available)
+
+        if Verb.FLIP < self.n_verbs and self.can_flip:
+            has_source = (ctx.inv_sum > 0) & ((ctx.inv_sum.unsqueeze(1) - ctx.inv_b) > 0).any(dim=1)
+            mask[:, Verb.FLIP] = has_source
+
+        if Verb.STEAL < self.n_verbs and self.allow_steal and self.n_pantries > 0:
+            opp_stock = ctx.pan[:, :, COLOR_YELLOW] if ctx.pan.numel() > 0 else th.zeros((B, 0), device=device)
+            has_steal = (opp_stock > 0).any(dim=1) & (ctx.cap_left > 0)
+            mask[:, Verb.STEAL] = has_steal
+
+        dead = (~mask).all(dim=1)
+        if dead.any():
+            mask[dead, Verb.WAIT] = True
+
+        return mask
+
+    def _mask_node(self, ctx: MaskContext, verb: th.Tensor) -> th.Tensor:
+        B = verb.size(0)
+        device = verb.device
+        mask = th.zeros((B, self.n_nodes), dtype=th.bool, device=device)
+        current_node = ctx.blue_node
+
+        move_mask = verb == Verb.MOVE
+        if move_mask.any():
+            mask[move_mask] = True
+            mask[move_mask, current_node[move_mask]] = False
+
+        pick_mask = verb == Verb.PICK
+        if pick_mask.any() and self.n_pickups > 0:
+            valid = (ctx.pick_sum > 0) & (ctx.cap_left.view(B, 1) > 0)
+            mask[:, self.pickup_nodes] |= valid
+
+        place_mask = verb == Verb.PLACE
+        if place_mask.any():
+            if self.n_pantries > 0:
+                room = (ctx.pan_room > 0) & (ctx.inv_sum.view(B, 1) > 0)
+                mask[:, self.pantry_nodes] |= room
             if self.nest_blue >= 0:
-                allow_place = allow_place_here | at_blue_nest
-            else:
-                allow_place = allow_place_here | th.ones_like(allow_place_here, dtype=th.bool)
-            m_verb[:, Verb.PLACE] &= (inv_sum > 0) & allow_place
-        # FLIP requires can_flip and inventory
-        if Verb.FLIP < n_verbs:
-            if not self.can_flip:
-                m_verb[:, Verb.FLIP] = False
-            else:
-                m_verb[:, Verb.FLIP] &= (inv_sum > 0)
-        # WAIT allowed by default
-        # STEAL requires allow_steal, valid pantry, any stock
-        if Verb.STEAL < n_verbs:
-            if not self.allow_steal:
-                m_verb[:, Verb.STEAL] = False
-            else:
-                m_verb[:, Verb.STEAL] &= valid_pantry & (pan_sum > 0)
+                mask[:, self.nest_blue] |= ctx.inv_sum > 0
 
-        # Node mask: allow all nodes; environment penalizes idle moves separately
-        m_node = th.ones((B, self.n_nodes), dtype=th.bool, device=device)
+        flip_mask = verb == Verb.FLIP
+        if flip_mask.any():
+            mask[flip_mask, current_node[flip_mask]] = True
 
+        steal_mask = verb == Verb.STEAL
+        if steal_mask.any() and self.n_pantries > 0:
+            opp_stock = ctx.pan[:, :, COLOR_YELLOW] if ctx.pan.numel() > 0 else th.zeros((B, 0), device=device)
+            steal_room = (opp_stock > 0) & (ctx.cap_left.view(B, 1) > 0)
+            mask[:, self.pantry_nodes] |= steal_room
 
-        # Color mask:
-        #  - PICK: only colors with stock>0 at current pickup
-        #  - PLACE: only colors present in inventory
-        #  - FLIP: allow target colors that can be produced via flipping existing stock
-        m_color = th.ones((B, self.n_colors), dtype=th.bool, device=device)
-        if M > 0:
-            pick_here = self._safe_gather_vec_colors(pick, at_pickup, valid_pickup)
-            m_color_pick = (pick_here > 0)
+        wait_mask = verb == Verb.WAIT
+        if wait_mask.any():
+            mask[wait_mask, current_node[wait_mask]] = True
+
+        empty = (~mask).all(dim=1)
+        if empty.any():
+            mask[empty, current_node[empty]] = True
+
+        return mask
+
+    def _mask_color(self, ctx: MaskContext, verb: th.Tensor, node: th.Tensor) -> th.Tensor:
+        B = verb.size(0)
+        device = verb.device
+        mask = th.zeros((B, self.n_colors), dtype=th.bool, device=device)
+
+        pickup_local = self.pickup_idx[node] if self.pickup_idx.numel() else th.full_like(node, -1)
+        pantry_local = self.pantry_idx[node] if self.pantry_idx.numel() else th.full_like(node, -1)
+
+        pick_mask = verb == Verb.PICK
+        if pick_mask.any() and self.n_pickups > 0:
+            valid_rows = pick_mask & (pickup_local >= 0)
+            if valid_rows.any():
+                local = pickup_local[valid_rows]
+                stocks = ctx.pick[valid_rows, :, :].gather(1, local.unsqueeze(1).unsqueeze(2).expand(-1, 1, self.n_colors)).squeeze(1)
+                mask[valid_rows] = (stocks > 0) & (ctx.cap_left[valid_rows].unsqueeze(1) > 0)
+
+        place_mask = verb == Verb.PLACE
+        if place_mask.any():
+            valid_pantry = place_mask & (pantry_local >= 0)
+            if valid_pantry.any():
+                local = pantry_local[valid_pantry]
+                room = ctx.pan_room[valid_pantry, :].gather(1, local.unsqueeze(1)).squeeze(1)
+                inv = ctx.inv_b[valid_pantry]
+                mask[valid_pantry] = (inv > 0) & (room.unsqueeze(1) > 0)
+            valid_nest = place_mask & (node == self.nest_blue)
+            if valid_nest.any():
+                inv = ctx.inv_b[valid_nest]
+                mask[valid_nest, COLOR_BLUE] = inv[:, COLOR_BLUE] > 0
+
+        flip_mask = verb == Verb.FLIP
+        if flip_mask.any():
+            inv_sum = ctx.inv_sum.view(B, 1)
+            mask[flip_mask] = (inv_sum - ctx.inv_b)[flip_mask] > 0
+
+        steal_mask = verb == Verb.STEAL
+        if steal_mask.any() and self.n_pantries > 0:
+            valid_rows = steal_mask & (pantry_local >= 0)
+            if valid_rows.any():
+                local = pantry_local[valid_rows]
+                stocks = ctx.pan[valid_rows, :, :].gather(1, local.unsqueeze(1).unsqueeze(2).expand(-1, 1, self.n_colors)).squeeze(1)
+                mask[valid_rows] = (stocks > 0) & (ctx.cap_left[valid_rows].unsqueeze(1) > 0)
+
+        move_wait_mask = (verb == Verb.MOVE) | (verb == Verb.WAIT)
+        if move_wait_mask.any():
+            mask[move_wait_mask, 0] = True
+
+        empty = (~mask).all(dim=1)
+        if empty.any():
+            mask[empty, 0] = True
+
+        return mask
+
+    def _mask_qty(self, ctx: MaskContext, verb: th.Tensor, node: th.Tensor, color: th.Tensor) -> th.Tensor:
+        B = verb.size(0)
+        device = verb.device
+        mask = th.zeros((B, self.max_qtyp1), dtype=th.bool, device=device)
+        mask[:, 0] = True
+        idx = th.arange(self.max_qtyp1, device=device).view(1, -1)
+
+        pickup_local = self.pickup_idx[node] if self.pickup_idx.numel() else th.full_like(node, -1)
+        pantry_local = self.pantry_idx[node] if self.pantry_idx.numel() else th.full_like(node, -1)
+
+        pick_mask = verb == Verb.PICK
+        if pick_mask.any() and self.n_pickups > 0:
+            valid_rows = pick_mask & (pickup_local >= 0)
+            if valid_rows.any():
+                local = pickup_local[valid_rows]
+                stocks = ctx.pick[valid_rows, :, :].gather(1, local.unsqueeze(1).unsqueeze(2).expand(-1, 1, self.n_colors)).squeeze(1)
+                stock_color = stocks[th.arange(stocks.size(0), device=device), color[valid_rows]]
+                max_stock = th.floor(stock_color).long()
+                cap = th.floor(ctx.cap_left[valid_rows]).long()
+                limit = th.minimum(max_stock, cap).clamp(min=0, max=self.max_qtyp1 - 1)
+                mask_vals = idx <= limit.unsqueeze(1)
+                mask[valid_rows] = mask_vals
+                mask[valid_rows, 0] = True
+
+        place_mask = verb == Verb.PLACE
+        if place_mask.any():
+            valid_pantry = place_mask & (pantry_local >= 0)
+            if valid_pantry.any():
+                local = pantry_local[valid_pantry]
+                room = ctx.pan_room[valid_pantry, :].gather(1, local.unsqueeze(1)).squeeze(1)
+                inv = ctx.inv_b[valid_pantry, color[valid_pantry]]
+                limit = th.minimum(th.floor(room).long(), th.floor(inv).long()).clamp(min=0, max=self.max_qtyp1 - 1)
+                mask_vals = idx <= limit.unsqueeze(1)
+                mask[valid_pantry] = mask_vals
+                mask[valid_pantry, 0] = True
+            valid_nest = place_mask & (node == self.nest_blue)
+            if valid_nest.any():
+                inv = ctx.inv_b[valid_nest, COLOR_BLUE]
+                limit = th.floor(inv).long().clamp(min=0, max=self.max_qtyp1 - 1)
+                mask_vals = idx <= limit.unsqueeze(1)
+                mask[valid_nest] = mask_vals
+                mask[valid_nest, 0] = True
+
+        flip_mask = verb == Verb.FLIP
+        if flip_mask.any():
+            other_color = 1 - color[flip_mask]
+            inv_other = ctx.inv_b[flip_mask, other_color]
+            limit = th.floor(inv_other).long().clamp(min=0, max=self.max_qtyp1 - 1)
+            mask_vals = idx <= limit.unsqueeze(1)
+            mask[flip_mask] = mask_vals
+            mask[flip_mask, 0] = True
+
+        steal_mask = verb == Verb.STEAL
+        if steal_mask.any() and self.n_pantries > 0:
+            valid_rows = steal_mask & (pantry_local >= 0)
+            if valid_rows.any():
+                local = pantry_local[valid_rows]
+                stocks = ctx.pan[valid_rows, :, :].gather(1, local.unsqueeze(1).unsqueeze(2).expand(-1, 1, self.n_colors)).squeeze(1)
+                stock_color = stocks[th.arange(stocks.size(0), device=device), color[valid_rows]]
+                max_stock = th.floor(stock_color).long()
+                cap = th.floor(ctx.cap_left[valid_rows]).long()
+                limit = th.minimum(max_stock, cap).clamp(min=0, max=self.max_qtyp1 - 1)
+                mask_vals = idx <= limit.unsqueeze(1)
+                mask[valid_rows] = mask_vals
+                mask[valid_rows, 0] = True
+
+        move_wait_mask = (verb == Verb.MOVE) | (verb == Verb.WAIT)
+        if move_wait_mask.any():
+            mask[move_wait_mask] = False
+            mask[move_wait_mask, 0] = True
+
+        empty = (~mask).all(dim=1)
+        if empty.any():
+            mask[empty, 0] = True
+
+        return mask
+
+    # ---- masking utilities ----------------------------------------------
+    @staticmethod
+    def _apply_mask(logits: th.Tensor, mask: th.Tensor) -> th.Tensor:
+        mask = mask.bool()
+        masked = th.where(mask, logits, th.full_like(logits, BIG_NEG))
+        dead = (~mask).all(dim=1, keepdim=True)
+        if dead.any():
+            masked = masked.clone()
+            fallback = logits.max(dim=1, keepdim=True).values
+            masked[dead] = fallback[dead]
+        return masked
+
+    def _sample_head(self, logits: th.Tensor, mask: th.Tensor, deterministic: bool) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
+        masked_logits = self._apply_mask(logits, mask)
+        dist = Categorical(logits=masked_logits)
+        if deterministic:
+            actions = masked_logits.argmax(dim=1)
         else:
-            m_color_pick = m_color.clone()
-        m_color_place = (inv_b > 0)
-        # Intersection keeps it safe for both verbs without making all-false
-        m_color = m_color & (m_color_pick | m_color_place)
-        # When flipping is legal, permit colors with convertible stock (any non-zero other color)
-        allow_flip_head = Verb.FLIP < n_verbs and self.can_flip
-        if allow_flip_head:
-            flip_enabled = m_verb[:, Verb.FLIP]
-            place_enabled = m_verb[:, Verb.PLACE] if Verb.PLACE < n_verbs else th.zeros_like(flip_enabled, dtype=th.bool)
-            if flip_enabled.any():
-                inv_sum_ = inv_sum.view(B, 1)
-                has_other_color = (inv_sum_ - inv_b) > 0
-                flip_extra = has_other_color & flip_enabled.view(B, 1)
-                flip_extra &= (~place_enabled).view(B, 1)
-                m_color = m_color | flip_extra
+            actions = dist.sample()
+        log_prob = dist.log_prob(actions)
+        entropy = dist.entropy()
+        return actions.long(), log_prob, entropy
 
-        # Qty mask: keep permissive (can be refined per-verb later)
-        m_qty = th.ones((B, self.max_qtyp1), dtype=th.bool, device=device)
-
-        # Safety: avoid all-false rows
-        for head in (m_verb, m_node, m_color, m_qty):
-            dead = (~head).all(dim=1)
-            if dead.any():
-                head[dead] = True
-
-        return m_verb, m_node, m_color, m_qty
-
-    # -------- forward --------
-    def _masked_distribution(self, obs: th.Tensor, latent_pi: th.Tensor):
-        logits_all = self.action_net(latent_pi)  # (B, sum(nvec))
-        logits_heads = [logits_all[:, s:e] for (s, e) in self.slices]
-
-        m_verb, m_node, m_color, m_qty = self._build_masks(obs)
-        masks = [m_verb, m_node, m_color, m_qty]
-
-        masked_heads = []
-        for logit_head, mask_head in zip(logits_heads, masks):
-            if mask_head.dtype != th.bool:
-                mask_head = mask_head.bool()
-            min_valid = logit_head.masked_fill(~mask_head, th.inf).amin(dim=1, keepdim=True)
-            fill = (min_valid - 1.0).expand_as(logit_head)
-            masked = th.where(mask_head, logit_head, fill)
-            dead = (~mask_head).all(dim=1)
-            if dead.any():
-                masked[dead] = logit_head[dead]
-            masked_heads.append(masked)
-
-        masked_logits = th.cat(masked_heads, dim=1)
-        return self.action_dist.proba_distribution(masked_logits)
-
+    # ---- sampling / evaluation -------------------------------------------
     def _latent_pi_vf(self, obs: th.Tensor) -> Tuple[th.Tensor, th.Tensor]:
         features = self.extract_features(obs)
         if self.share_features_extractor:
@@ -243,22 +364,145 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
             latent_vf = self.mlp_extractor.forward_critic(vf_features)
         return latent_pi, latent_vf
 
-    def forward(self, obs: th.Tensor, deterministic: bool = False):
+    def _split_logits(self, latent_pi: th.Tensor) -> Tuple[th.Tensor, th.Tensor, th.Tensor, th.Tensor]:
+        logits_all = self.action_net(latent_pi)
+        logits_heads = [logits_all[:, s:e] for (s, e) in self.slices]
+        return tuple(logits_heads)  # verb, node, color, qty
+
+    def _sample_actions(self, obs: th.Tensor, latent_pi: th.Tensor, deterministic: bool = False):
+        verb_logits, node_logits, color_logits, qty_logits = self._split_logits(latent_pi)
+        ctx = self._build_context(obs)
+
+        verb_mask = self._mask_verb(ctx)
+        verb, logp_verb, ent_verb = self._sample_head(verb_logits, verb_mask, deterministic)
+
+        B = obs.size(0)
+        device = obs.device
+
+        node = ctx.blue_node.clone()
+        logp_node = th.zeros(B, device=device)
+        ent_node = th.zeros(B, device=device)
+        node_required = (verb == Verb.MOVE) | (verb == Verb.PICK) | (verb == Verb.PLACE) | (verb == Verb.STEAL)
+        if node_required.any():
+            node_mask = self._mask_node(ctx, verb)
+            sel_node, lp_node, en_node = self._sample_head(node_logits[node_required], node_mask[node_required], deterministic)
+            node[node_required] = sel_node
+            logp_node[node_required] = lp_node
+            ent_node[node_required] = en_node
+
+        color = th.zeros(B, dtype=th.long, device=device)
+        logp_color = th.zeros(B, device=device)
+        ent_color = th.zeros(B, device=device)
+        color_required = (verb == Verb.PICK) | (verb == Verb.PLACE) | (verb == Verb.FLIP) | (verb == Verb.STEAL)
+        if color_required.any():
+            color_mask = self._mask_color(ctx, verb, node)
+            sel_color, lp_color, en_color = self._sample_head(color_logits[color_required], color_mask[color_required], deterministic)
+            color[color_required] = sel_color
+            logp_color[color_required] = lp_color
+            ent_color[color_required] = en_color
+
+        qty = th.zeros(B, dtype=th.long, device=device)
+        logp_qty = th.zeros(B, device=device)
+        ent_qty = th.zeros(B, device=device)
+        qty_required = (verb == Verb.PICK) | (verb == Verb.PLACE) | (verb == Verb.FLIP) | (verb == Verb.STEAL)
+        if qty_required.any():
+            qty_mask = self._mask_qty(ctx, verb, node, color)
+            sel_qty, lp_qty, en_qty = self._sample_head(qty_logits[qty_required], qty_mask[qty_required], deterministic)
+            qty[qty_required] = sel_qty
+            logp_qty[qty_required] = lp_qty
+            ent_qty[qty_required] = en_qty
+
+        actions = th.stack([verb, node, color, qty], dim=1)
+        log_prob = logp_verb + logp_node + logp_color + logp_qty
+        entropy = ent_verb + ent_node + ent_color + ent_qty
+        return actions, log_prob, entropy
+
+    def _evaluate(self, obs: th.Tensor, latent_pi: th.Tensor, actions: th.Tensor):
+        verb_logits, node_logits, color_logits, qty_logits = self._split_logits(latent_pi)
+        ctx = self._build_context(obs)
+
+        verb = actions[:, 0].long()
+        node = actions[:, 1].long()
+        color = actions[:, 2].long()
+        qty = actions[:, 3].long()
+
+        device = obs.device
+        B = obs.size(0)
+
+        verb_mask = self._mask_verb(ctx)
+        masked_verb = self._apply_mask(verb_logits, verb_mask)
+        verb_dist = Categorical(logits=masked_verb)
+        logp_verb = verb_dist.log_prob(verb)
+        ent_verb = verb_dist.entropy()
+
+        logp_node = th.zeros(B, device=device)
+        ent_node = th.zeros(B, device=device)
+        node_required = (verb == Verb.MOVE) | (verb == Verb.PICK) | (verb == Verb.PLACE) | (verb == Verb.STEAL)
+        if node_required.any():
+            node_mask = self._mask_node(ctx, verb)
+            masked = self._apply_mask(node_logits[node_required], node_mask[node_required])
+            dist = Categorical(logits=masked)
+            logp_node[node_required] = dist.log_prob(node[node_required])
+            ent_node[node_required] = dist.entropy()
+
+        logp_color = th.zeros(B, device=device)
+        ent_color = th.zeros(B, device=device)
+        color_required = (verb == Verb.PICK) | (verb == Verb.PLACE) | (verb == Verb.FLIP) | (verb == Verb.STEAL)
+        if color_required.any():
+            color_mask = self._mask_color(ctx, verb, node)
+            masked = self._apply_mask(color_logits[color_required], color_mask[color_required])
+            dist = Categorical(logits=masked)
+            logp_color[color_required] = dist.log_prob(color[color_required])
+            ent_color[color_required] = dist.entropy()
+
+        logp_qty = th.zeros(B, device=device)
+        ent_qty = th.zeros(B, device=device)
+        qty_required = (verb == Verb.PICK) | (verb == Verb.PLACE) | (verb == Verb.FLIP) | (verb == Verb.STEAL)
+        if qty_required.any():
+            qty_mask = self._mask_qty(ctx, verb, node, color)
+            masked = self._apply_mask(qty_logits[qty_required], qty_mask[qty_required])
+            dist = Categorical(logits=masked)
+            logp_qty[qty_required] = dist.log_prob(qty[qty_required])
+            ent_qty[qty_required] = dist.entropy()
+
+        log_prob = logp_verb + logp_node + logp_color + logp_qty
+        entropy = ent_verb + ent_node + ent_color + ent_qty
+        return log_prob, entropy
+
+    # ---- SB3 overrides ---------------------------------------------------
+    def forward(self, obs: th.Tensor, deterministic: bool = False):  # type: ignore[override]
         latent_pi, latent_vf = self._latent_pi_vf(obs)
-        dist = self._masked_distribution(obs, latent_pi)
-        actions = dist.get_actions(deterministic=deterministic)
-        log_prob = dist.log_prob(actions)
+        actions, log_prob, _ = self._sample_actions(obs, latent_pi, deterministic)
         values = self.value_net(latent_vf)
         return actions, values, log_prob
 
-    def evaluate_actions(self, obs: th.Tensor, actions: th.Tensor):
+    def evaluate_actions(self, obs: th.Tensor, actions: th.Tensor):  # type: ignore[override]
         latent_pi, latent_vf = self._latent_pi_vf(obs)
-        dist = self._masked_distribution(obs, latent_pi)
-        log_prob = dist.log_prob(actions)
-        entropy = dist.entropy()
+        log_prob, entropy = self._evaluate(obs, latent_pi, actions)
         values = self.value_net(latent_vf)
         return values, log_prob, entropy
 
-    def get_distribution(self, obs: th.Tensor):
+    def get_distribution(self, obs: th.Tensor):  # type: ignore[override]
         latent_pi, _ = self._latent_pi_vf(obs)
-        return self._masked_distribution(obs, latent_pi)
+        policy = self
+
+        class BranchedDistribution:
+            def __init__(self, obs: th.Tensor, latent_pi: th.Tensor):
+                self._obs = obs
+                self._latent_pi = latent_pi
+
+            def get_actions(self, deterministic: bool = False):
+                actions, _, _ = policy._sample_actions(self._obs, self._latent_pi, deterministic)
+                return actions
+
+            def log_prob(self, actions: th.Tensor):
+                log_prob, _ = policy._evaluate(self._obs, self._latent_pi, actions)
+                return log_prob
+
+            def entropy(self):
+                # entropy for deterministic trajectories is only used for logging;
+                # compute using freshly sampled actions.
+                actions, _, entropy = policy._sample_actions(self._obs, self._latent_pi, deterministic=False)
+                return entropy
+
+        return BranchedDistribution(obs, latent_pi)
