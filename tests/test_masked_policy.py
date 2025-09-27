@@ -53,6 +53,9 @@ def test_pick_and_place_masks(env, mask_cfg):
     _drain_env(env)
     obs = env._obs()
     assert env.world.blue.inv[Col.BLUE] >= 1
+    obs_t = th.as_tensor(obs, dtype=th.float32).unsqueeze(0)
+    m_verb_after_pick, _, _, _ = policy._build_masks(obs_t)
+    assert not bool(m_verb_after_pick[0, Verb.PLACE])
 
     obs, _, _, _, _ = env.step(np.array([Verb.MOVE, pantry, Col.BLUE, 0]))
     _drain_env(env)

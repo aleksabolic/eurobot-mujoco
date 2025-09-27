@@ -15,7 +15,8 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
     Provide env sizes/lookups via policy_kwargs['mask_cfg'] when constructing PPO:
       mask_cfg = {
         "n_pantries": K, "n_pickups": M, "n_nodes": n_nodes, "max_qty": max_qty,
-        "capacity": capacity, "allow_steal": True/False, "can_flip": True/False,
+        "capacity": capacity, "pantry_cap": pantry_cap, "allow_steal": True/False,
+        "can_flip": True/False, "nest_blue": nest_node_index, "nest_yellow": nest_node_index,
         "pantry_idx": list[int] len==n_nodes (local index or -1),
         "pickup_idx": list[int] len==n_nodes (local index or -1),
       }
@@ -51,6 +52,9 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
         self.capacity = float(self.mask_cfg.get("capacity", 999))
         self.allow_steal = bool(self.mask_cfg.get("allow_steal", True))
         self.can_flip = bool(self.mask_cfg.get("can_flip", True))
+        self.pantry_cap = float(self.mask_cfg.get("pantry_cap", 1e9))
+        self.nest_blue = int(self.mask_cfg.get("nest_blue", -1))
+        self.nest_yellow = int(self.mask_cfg.get("nest_yellow", -1))
 
         # Node -> local index (-1 if not that kind)
         pantry_idx = np.asarray(self.mask_cfg["pantry_idx"], dtype=np.int64)
@@ -118,16 +122,25 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
         M = self.n_pickups
         pan = pan_flat.view(B, K, self.n_colors) if K > 0 else th.zeros((B, 0, self.n_colors), device=device)
         pick = pick_flat.view(B, M, self.n_colors) if M > 0 else th.zeros((B, 0, self.n_colors), device=device)
-
+        
         # Node class at current position
         at_pantry = self.pantry_idx[blue_node]  # (B,)
         at_pickup = self.pickup_idx[blue_node]  # (B,)
         valid_pantry = at_pantry != -1
         valid_pickup = at_pickup != -1
+        at_blue_nest = blue_node == self.nest_blue
 
         # Stock sums at current node (0 if invalid)
         pick_sum = self._safe_gather_sum_colors(pick, at_pickup, valid_pickup) if M > 0 else th.zeros(B, device=device)
-        pan_sum = self._safe_gather_sum_colors(pan, at_pantry, valid_pantry) if K > 0 else th.zeros(B, device=device)
+        if K > 0:
+            pan_here = self._safe_gather_vec_colors(pan, at_pantry, valid_pantry)
+            pan_sum = pan_here.sum(dim=1)
+            pan_cap = pan_sum.new_full((B,), float(self.pantry_cap))
+            pan_room = (pan_cap - pan_sum).clamp_min(0)
+        else:
+            pan_sum = th.zeros(B, device=device)
+            pan_here = th.zeros((B, self.n_colors), device=device)
+            pan_room = th.zeros(B, device=device)
 
         # Verb mask (indices follow robot.Verb enum)
         n_verbs = int(self.nvec[0].item())
@@ -137,7 +150,12 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
             m_verb[:, Verb.PICK] &= valid_pickup & (pick_sum > 0) & (cap_left > 0)
         # PLACE requires inventory
         if Verb.PLACE < n_verbs:
-            m_verb[:, Verb.PLACE] &= (inv_sum > 0)
+            allow_place_here = valid_pantry & (pan_room > 0)
+            if self.nest_blue >= 0:
+                allow_place = allow_place_here | at_blue_nest
+            else:
+                allow_place = allow_place_here | th.ones_like(allow_place_here, dtype=th.bool)
+            m_verb[:, Verb.PLACE] &= (inv_sum > 0) & allow_place
         # FLIP requires can_flip and inventory
         if Verb.FLIP < n_verbs:
             if not self.can_flip:
@@ -173,10 +191,13 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
         allow_flip_head = Verb.FLIP < n_verbs and self.can_flip
         if allow_flip_head:
             flip_enabled = m_verb[:, Verb.FLIP]
+            place_enabled = m_verb[:, Verb.PLACE] if Verb.PLACE < n_verbs else th.zeros_like(flip_enabled, dtype=th.bool)
             if flip_enabled.any():
                 inv_sum_ = inv_sum.view(B, 1)
                 has_other_color = (inv_sum_ - inv_b) > 0
-                m_color = m_color | (has_other_color & flip_enabled.view(B, 1))
+                flip_extra = has_other_color & flip_enabled.view(B, 1)
+                flip_extra &= (~place_enabled).view(B, 1)
+                m_color = m_color | flip_extra
 
         # Qty mask: keep permissive (can be refined per-verb later)
         m_qty = th.ones((B, self.max_qtyp1), dtype=th.bool, device=device)
@@ -199,7 +220,11 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
 
         masked_heads = []
         for logit_head, mask_head in zip(logits_heads, masks):
-            masked = th.where(mask_head, logit_head, th.full_like(logit_head, BIG_NEG))
+            if mask_head.dtype != th.bool:
+                mask_head = mask_head.bool()
+            min_valid = logit_head.masked_fill(~mask_head, th.inf).amin(dim=1, keepdim=True)
+            fill = (min_valid - 1.0).expand_as(logit_head)
+            masked = th.where(mask_head, logit_head, fill)
             dead = (~mask_head).all(dim=1)
             if dead.any():
                 masked[dead] = logit_head[dead]

@@ -1,7 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import List, Optional, Tuple, Callable, Dict
+from typing import List, Optional, Tuple, Callable, Dict, Any
 import numpy as np
 from robot import RobotProfile, RobotState, Verb
 from policies import GreedyStashPolicy
@@ -130,6 +130,7 @@ class EurobotWorld:
 
         # episode history for renderer (list of shallow snapshots)
         self.history: List[Dict] = []
+        self.last_invalid_detail: Optional[Dict[str, Any]] = None
         self._snap("reset")
 
     # ----- public step for BLUE -----
@@ -258,18 +259,40 @@ class EurobotWorld:
                 rob.inv[color]           += take
                 self._snap(f"{actor_tag}_pick")
             else:
+                detail = dict(
+                    reason="pickup_no_stock" if can_take <= 0 else "capacity_reached",
+                    actor=actor_tag,
+                    verb="PICK",
+                    color=int(color),
+                    qty=int(qty),
+                    available=int(can_take),
+                    capacity_left=int(room),
+                    inventory=self._inventory_snapshot(rob.inv),
+                )
+                detail.update(self._describe_node(node))
                 if actor_tag == "blue":
                     r -= self.rewards.invalid_action_penalty
-                self._snap(f"{actor_tag}_pick_empty")
+                    self.last_invalid_detail = detail
+                self._snap(f"{actor_tag}_pick_empty", invalid_detail=detail)
             return r
 
         if verb == Verb.PLACE:
             idx = self.pantry_idx[node]
             have = int(rob.inv[color])
             if have <= 0:
+                detail = dict(
+                    reason="empty_inventory",
+                    actor=actor_tag,
+                    verb="PLACE",
+                    color=int(color),
+                    qty=int(qty),
+                    inventory=self._inventory_snapshot(rob.inv),
+                )
+                detail.update(self._describe_node(node))
                 if actor_tag == "blue":
                     r -= self.rewards.invalid_action_penalty
-                self._snap(f"{actor_tag}_place_empty")
+                    self.last_invalid_detail = detail
+                self._snap(f"{actor_tag}_place_empty", invalid_detail=detail)
                 return r
 
             if idx != -1:  # placing at a pantry
@@ -284,9 +307,20 @@ class EurobotWorld:
                         r += self.rewards.pantry_bonus * put
                     self._snap(f"{actor_tag}_place")
                 else:
+                    detail = dict(
+                        reason="no_room" if room <= 0 else "zero_qty",
+                        actor=actor_tag,
+                        verb="PLACE",
+                        color=int(color),
+                        qty=int(qty),
+                        room=int(room),
+                        inventory=self._inventory_snapshot(rob.inv),
+                    )
+                    detail.update(self._describe_node(node))
                     if actor_tag == "blue":
                         r -= self.rewards.invalid_action_penalty
-                    self._snap(f"{actor_tag}_place_full")
+                        self.last_invalid_detail = detail
+                    self._snap(f"{actor_tag}_place_full", invalid_detail=detail)
                 return r
 
             if actor_tag=="blue" and node == self.NEST_BLUE:
@@ -314,7 +348,19 @@ class EurobotWorld:
 
             if actor_tag == "blue":
                 r -= self.rewards.invalid_action_penalty
-            self._snap(f"{actor_tag}_place_invalid")
+                detail = dict(
+                    reason="invalid_location",
+                    actor=actor_tag,
+                    verb="PLACE",
+                    color=int(color),
+                    qty=int(qty),
+                    inventory=self._inventory_snapshot(rob.inv),
+                )
+                detail.update(self._describe_node(node))
+                self.last_invalid_detail = detail
+                self._snap(f"{actor_tag}_place_invalid", invalid_detail=detail)
+            else:
+                self._snap(f"{actor_tag}_place_invalid")
             return r
 
         if verb == Verb.FLIP:
@@ -328,9 +374,19 @@ class EurobotWorld:
             src = int(src_candidates[int(np.argmax(rob.inv[src_candidates]))])
             k = min(qty, int(rob.inv[src]))
             if k <= 0:
+                detail = dict(
+                    reason="flip_no_source",
+                    actor=actor_tag,
+                    verb="FLIP",
+                    color=int(color),
+                    qty=int(qty),
+                    inventory=self._inventory_snapshot(rob.inv),
+                )
+                detail.update(self._describe_node(node))
                 if actor_tag == "blue":
                     r -= self.rewards.invalid_action_penalty
-                self._snap(f"{actor_tag}_flip_empty")
+                    self.last_invalid_detail = detail
+                self._snap(f"{actor_tag}_flip_empty", invalid_detail=detail)
                 return r
             rob.inv[src]   -= k
             rob.inv[color] += k
@@ -356,15 +412,39 @@ class EurobotWorld:
                 rob.inv[color]            += take
                 self._snap(f"{actor_tag}_steal")
             else:
+                detail = dict(
+                    reason="steal_empty" if have <= 0 else "capacity_reached",
+                    actor=actor_tag,
+                    verb="STEAL",
+                    color=int(color),
+                    qty=int(qty),
+                    available=int(have),
+                    capacity_left=int(room),
+                    inventory=self._inventory_snapshot(rob.inv),
+                )
+                detail.update(self._describe_node(node))
                 if actor_tag == "blue":
                     r -= self.rewards.invalid_action_penalty
-                self._snap(f"{actor_tag}_steal_empty")
+                    self.last_invalid_detail = detail
+                self._snap(f"{actor_tag}_steal_empty", invalid_detail=detail)
             return r
 
         if verb == Verb.WAIT:
             if actor_tag == "blue":
                 r -= self.rewards.invalid_action_penalty
-            self._snap(f"{actor_tag}_wait")
+            detail = dict(
+                reason="wait",
+                actor=actor_tag,
+                verb="WAIT",
+                qty=int(qty),
+                inventory=self._inventory_snapshot(rob.inv),
+            )
+            detail.update(self._describe_node(node))
+            if actor_tag == "blue":
+                self.last_invalid_detail = detail
+                self._snap(f"{actor_tag}_wait", invalid_detail=detail)
+            else:
+                self._snap(f"{actor_tag}_wait")
             return r
 
         return r
@@ -409,9 +489,9 @@ class EurobotWorld:
 
     #TODO move this somewhere else
     # ----- helpers -----
-    def _snap(self, tag: str):
-        # return # slows down learning 
-        self.history.append(dict(
+    def _snap(self, tag: str, **extra):
+        # return # slows down learning
+        snap = dict(
             tag=tag,
             t_left=float(self.t_left),
             blue_node=int(self.blue.node),
@@ -420,7 +500,10 @@ class EurobotWorld:
             yellow_inv=self.yellow.inv.copy(),
             pantries=self.pantries.copy(),
             pickups=self.pickups.copy(),
-        ))
+        )
+        if extra:
+            snap["extra"] = extra
+        self.history.append(snap)
 
     def _nearest(self, start: int, pool: List[int]) -> int:
         i = int(np.argmin(self.D[start, pool] + 1e-6))
@@ -429,6 +512,14 @@ class EurobotWorld:
     def _pickup_avail(self, node: int, color: int) -> int:
         idx = self.pickup_idx[node]
         return 0 if idx == -1 else int(self.pickups[idx, color])
+    
+    def _describe_node(self, node: int) -> Dict[str, Any]:
+        node_idx = int(np.clip(node, 0, self.N - 1))
+        n = self.nodes[node_idx]
+        return dict(node=node_idx, node_name=str(n.name), node_kind=n.kind.name)
+
+    def _inventory_snapshot(self, inv: np.ndarray) -> Dict[str, int]:
+        return {Col(i).name.lower(): int(inv[i]) for i in range(NUM_COLORS)}
     
     # --- policy helpers (thin wrappers) ---
     def pickup_avail(self, node: int, color: int) -> int:

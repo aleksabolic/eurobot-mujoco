@@ -41,6 +41,7 @@ def run(model_path, episodes=3, render=False, fps=1.0, gif_path=None):
             f"Episode {ep+1}: rl_return_blue={rl_return:.2f} "
             f"score_blue={blue_score:.2f} score_yellow={yellow_score:.2f}"
         )
+        print(env.world.last_invalid_detail)
         print([h["tag"] for h in env.world.history[:12]])
         print([h["tag"] for h in env.world.history[-12:]])
         if frames is not None:
