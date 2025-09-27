@@ -151,6 +151,7 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
         # Color mask:
         #  - PICK: only colors with stock>0 at current pickup
         #  - PLACE: only colors present in inventory
+        #  - FLIP: allow target colors that can be produced via flipping existing stock
         m_color = th.ones((B, self.n_colors), dtype=th.bool, device=device)
         if M > 0:
             pick_here = self._safe_gather_vec3(pick, at_pickup, valid_pickup)  # (B,3)
@@ -160,6 +161,14 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
         m_color_place = (inv_b > 0)
         # Intersection keeps it safe for both verbs without making all-false
         m_color = m_color & (m_color_pick | m_color_place)
+        # When flipping is legal, permit colors with convertible stock (any non-zero other color)
+        allow_flip_head = Verb.FLIP < n_verbs and self.can_flip
+        if allow_flip_head:
+            flip_enabled = m_verb[:, Verb.FLIP]
+            if flip_enabled.any():
+                inv_sum_ = inv_sum.view(B, 1)
+                has_other_color = (inv_sum_ - inv_b) > 0
+                m_color = m_color | (has_other_color & flip_enabled.view(B, 1))
 
         # Qty mask: keep permissive (can be refined per-verb later)
         m_qty = th.ones((B, self.max_qtyp1), dtype=th.bool, device=device)
