@@ -3,14 +3,14 @@ import numpy as np
 import gymnasium as gym
 from gymnasium import spaces
 from typing import Optional, Tuple
-from eurobot_world import EurobotWorld
+from eurobot_world import EurobotWorld, Col
 from robot import RobotProfile
 from policies import load_robot_config
 
 class EurobotDiscreteEnv(gym.Env):
     """
     Single-agent (BLUE) Gym env wrapping EurobotWorld.
-    Action = MultiDiscrete [verb(5), node(N), color(3), qty(0..max_qty)].
+    Action = MultiDiscrete [verb(5), node(N), color(2), qty(0..max_qty)].
     One env.step = one BLUE decision; world advances to next event completion.
     """
     metadata = {"render_modes": [], "name": "EurobotDiscrete-v1"}
@@ -26,21 +26,28 @@ class EurobotDiscreteEnv(gym.Env):
 
         self.n_nodes = len(self.world.nodes)
         self.max_qty = int(blue_prof.max_action_qty)  # assumed same for obs space shape
+        self.num_colors = len(Col)
 
-        self.action_space = spaces.MultiDiscrete([5, self.n_nodes, 3, self.max_qty+1])
+        self.action_space = spaces.MultiDiscrete([5, self.n_nodes, self.num_colors, self.max_qty+1])
         # obs = [t_left(float scaled 0..100*10), blue_node, yellow_node,
-        #        blue_inv(3), yellow_inv(3),
-        #        pantries(#*3), pickups(#*3)]
-        obs_dim = 3 + 3 + 3 + 3*len(self.world.PANTRIES) + 3*len(self.world.PICKUPS)
+        #        blue_inv(num_colors), yellow_inv(num_colors),
+        #        pantries(#*num_colors), pickups(#*num_colors)]
+        obs_dim = (
+            3
+            + self.num_colors
+            + self.num_colors
+            + self.num_colors * len(self.world.PANTRIES)
+            + self.num_colors * len(self.world.PICKUPS)
+        )
         self.observation_space = spaces.Box(low=0.0, high=1e6, shape=(obs_dim,), dtype=np.float32)
         self._obs_buf = np.zeros((obs_dim,), dtype=np.float32)
-        # slices: t_by(3), blue_inv(3), yellow_inv(3), pantries, pickups
+        # slices: t_by(3), blue_inv(num_colors), yellow_inv(num_colors), pantries, pickups
         i = 0
         self._sl_t_by = slice(i, i+3); i += 3
-        self._sl_inv_b = slice(i, i+3); i += 3
-        self._sl_inv_y = slice(i, i+3); i += 3
-        self._sl_pan   = slice(i, i + 3*len(self.world.PANTRIES)); i += 3*len(self.world.PANTRIES)
-        self._sl_pick  = slice(i, i + 3*len(self.world.PICKUPS));  i += 3*len(self.world.PICKUPS)
+        self._sl_inv_b = slice(i, i+self.num_colors); i += self.num_colors
+        self._sl_inv_y = slice(i, i+self.num_colors); i += self.num_colors
+        self._sl_pan   = slice(i, i + self.num_colors*len(self.world.PANTRIES)); i += self.num_colors*len(self.world.PANTRIES)
+        self._sl_pick  = slice(i, i + self.num_colors*len(self.world.PICKUPS));  i += self.num_colors*len(self.world.PICKUPS)
 
     def reset(self, seed: Optional[int]=None, options=None):
         self.world.reset(seed=seed)

@@ -61,7 +61,11 @@ def build_nodes() -> List[Node]:
 
 # --------- Colors ----------
 class Col(IntEnum):
-    BLUE=0; YELLOW=1; NEUTRAL=2
+    BLUE = 0
+    YELLOW = 1
+
+
+NUM_COLORS = len(Col)
 
 # --------- World ----------
 class EurobotWorld:
@@ -112,11 +116,11 @@ class EurobotWorld:
         if seed is not None: self.rng = np.random.default_rng(seed)
         self.t_left = float(TIME_LIMIT_S)
 
-        self.blue   = RobotState(node=self.NEST_BLUE, inv=np.zeros(3, np.int16))
-        self.yellow = RobotState(node=self.NEST_YELL, inv=np.zeros(3, np.int16))
+        self.blue   = RobotState(node=self.NEST_BLUE, inv=np.zeros(NUM_COLORS, dtype=np.int16))
+        self.yellow = RobotState(node=self.NEST_YELL, inv=np.zeros(NUM_COLORS, dtype=np.int16))
 
-        self.pantries = np.zeros((len(self.PANTRIES), 3), dtype=np.int16)
-        self.pickups  = np.zeros((len(self.PICKUPS),  3), dtype=np.int16)
+        self.pantries = np.zeros((len(self.PANTRIES), NUM_COLORS), dtype=np.int16)
+        self.pickups  = np.zeros((len(self.PICKUPS),  NUM_COLORS), dtype=np.int16)
         # initial pickup stock: 2 blue + 2 yellow each
         self.pickups[:, Col.BLUE]   = 2
         self.pickups[:, Col.YELLOW] = 2
@@ -161,8 +165,8 @@ class EurobotWorld:
         color = int(color)
         if color < 0:
             color = 0
-        elif color > 2:
-            color = 2
+        elif color > NUM_COLORS - 1:
+            color = NUM_COLORS - 1
         qty = int(qty)
         if qty < 0:
             qty = 0
@@ -246,9 +250,7 @@ class EurobotWorld:
                     r -= self.rewards.invalid_action_penalty
                 self._snap(f"{actor_tag}_pick_invalid"); return r
             can_take = int(self.pickups[idx, color])
-            # rob.inv is length-3: avoid tiny numpy sum allocation by summing scalars
-            inv0 = int(rob.inv[0]); inv1 = int(rob.inv[1]); inv2 = int(rob.inv[2])
-            inv_sum = inv0 + inv1 + inv2
+            inv_sum = int(rob.inv[0]) + int(rob.inv[1])
             room = int(prof.capacity - inv_sum)
             take     = max(0, min(qty, can_take, room))
             if take > 0:
@@ -271,14 +273,14 @@ class EurobotWorld:
                 return r
 
             if idx != -1:  # placing at a pantry
-                p0 = int(self.pantries[idx, 0]); p1 = int(self.pantries[idx, 1]); p2 = int(self.pantries[idx, 2])
-                total_here = p0 + p1 + p2
+                p0 = int(self.pantries[idx, 0]); p1 = int(self.pantries[idx, 1])
+                total_here = p0 + p1
                 room = max(0, self.pantry_cap - total_here)
                 put = max(0, min(qty, have, room))
                 if put > 0:
                     self.pantries[idx, color] += put
                     rob.inv[color]            -= put
-                    if actor_tag=="blue" and color in (Col.BLUE, Col.NEUTRAL):
+                    if actor_tag=="blue" and color == Col.BLUE:
                         r += self.rewards.pantry_bonus * put
                     self._snap(f"{actor_tag}_place")
                 else:
@@ -321,7 +323,7 @@ class EurobotWorld:
                     r -= self.rewards.invalid_action_penalty
                 self._snap(f"{actor_tag}_flip_blocked"); return r
             # move from most abundant non-target to target
-            src_candidates = [Col.BLUE, Col.YELLOW, Col.NEUTRAL]
+            src_candidates = [Col.BLUE, Col.YELLOW]
             if color in src_candidates: src_candidates.remove(Col(color))
             src = int(src_candidates[int(np.argmax(rob.inv[src_candidates]))])
             k = min(qty, int(rob.inv[src]))
@@ -346,8 +348,7 @@ class EurobotWorld:
                     r -= self.rewards.invalid_action_penalty
                 self._snap(f"{actor_tag}_steal_invalid"); return r
             have = int(self.pantries[idx, color])
-            inv0 = int(rob.inv[0]); inv1 = int(rob.inv[1]); inv2 = int(rob.inv[2])
-            inv_sum = inv0 + inv1 + inv2
+            inv_sum = int(rob.inv[0]) + int(rob.inv[1])
             room = int(prof.capacity - inv_sum)
             take = max(0, min(qty, have, room))
             if take > 0:
@@ -452,9 +453,9 @@ class EurobotWorld:
         scores=[]
         rob = (self.yellow if actor_tag=="yellow" else self.blue)
         for k,i in enumerate(self.PANTRIES):
-            # pantries[k] is length-3; sum explicitly
-            p0 = int(self.pantries[k, 0]); p1 = int(self.pantries[k, 1]); p2 = int(self.pantries[k, 2])
-            total = p0 + p1 + p2
+            # pantries[k] stores counts per color; sum explicitly
+            p0 = int(self.pantries[k, 0]); p1 = int(self.pantries[k, 1])
+            total = p0 + p1
             room  = max(0, self.pantry_cap - total) if self.pantry_cap > 0 else 999
             if room <= 0:
                 continue
@@ -462,7 +463,7 @@ class EurobotWorld:
             spread_pen = 0.0
             if prefer_spread:
                 # penalize heavy current color presence
-                spread_pen = float(self.pantries[k, Col.BLUE]**2 + self.pantries[k, Col.YELLOW]**2 + self.pantries[k, Col.NEUTRAL]**2) * 0.05
+                spread_pen = float(self.pantries[k, Col.BLUE]**2 + self.pantries[k, Col.YELLOW]**2) * 0.05
             scores.append((1.0*room - 0.5*dist - spread_pen, i))
         if not scores:
             return self.PANTRIES[0]
@@ -483,11 +484,6 @@ class EurobotWorld:
         return cand[0][1]
 
     def prefer_steal_color(self, actor_tag: str, pantry_node: int) -> int:
-        # steal opponent color first; if empty, steal neutral
+        # steal opponent color when available (only two colors remain)
         opp = Col.BLUE if actor_tag=="yellow" else Col.YELLOW
-        k = self.pantry_idx[pantry_node]
-        if k != -1 and int(self.pantries[k, opp]) > 0:
-            return int(opp)
-        if k != -1 and int(self.pantries[k, Col.NEUTRAL]) > 0:
-            return int(Col.NEUTRAL)
         return int(opp)

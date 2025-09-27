@@ -16,7 +16,7 @@ BLK  = (0,0,0)
 WHT  = (255,255,255)
 FACE_BLUE    = (255,210,191)
 FACE_YELLOW  = (179,250,255)
-FACE_NEUTRAL = (242,242,217)
+FACE_TIED    = (242,242,217)
 FACE_AVAIL   = (242,191,242)
 FACE_EMPTY   = (217,217,217)
 
@@ -105,13 +105,13 @@ class EurobotCV2Renderer:
             cx, cy = node.xy
             p0 = self._w2p(cx - PANTRY_HALF, cy - PANTRY_HALF)
             p1 = self._w2p(cx + PANTRY_HALF, cy + PANTRY_HALF)
-            b, y, n = int(pantries[k, Col.BLUE]), int(pantries[k, Col.YELLOW]), int(pantries[k, Col.NEUTRAL])
+            b, y = int(pantries[k, Col.BLUE]), int(pantries[k, Col.YELLOW])
             if b>y: c=FACE_BLUE
             elif y>b: c=FACE_YELLOW
-            else: c=FACE_NEUTRAL
+            else: c=FACE_TIED
             cv2.rectangle(img, p0, p1, c, thickness=-1)
             cv2.rectangle(img, p0, p1, BLK, 1)
-            label = f"B{b}/Y{y}/N{n}"
+            label = f"B{b}/Y{y}"
             (tw, th), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
             text_x = p0[0] + ((p1[0] - p0[0] - tw) // 2)
             text_y = p0[1] + ((p1[1] - p0[1] + th) // 2)
@@ -150,9 +150,9 @@ class EurobotCV2Renderer:
         header_y = 24
         cv2.putText(img, f"t_left = {t_left:.1f}s", (header_x, header_y),
                     cv2.FONT_HERSHEY_SIMPLEX, 0.6, BLK, 2, cv2.LINE_AA)
-        cv2.putText(img, f"BLUE inv: B{int(blue_inv[Col.BLUE])} Y{int(blue_inv[Col.YELLOW])} N{int(blue_inv[Col.NEUTRAL])}",
+        cv2.putText(img, f"BLUE inv: B{int(blue_inv[Col.BLUE])} Y{int(blue_inv[Col.YELLOW])}",
                     (header_x, header_y + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, BLK, 1, cv2.LINE_AA)
-        cv2.putText(img, f"YELL inv: B{int(yellow_inv[Col.BLUE])} Y{int(yellow_inv[Col.YELLOW])} N{int(yellow_inv[Col.NEUTRAL])}",
+        cv2.putText(img, f"YELL inv: B{int(yellow_inv[Col.BLUE])} Y{int(yellow_inv[Col.YELLOW])}",
                     (header_x, header_y + 36), cv2.FONT_HERSHEY_SIMPLEX, 0.5, BLK, 1, cv2.LINE_AA)
 
         if show:

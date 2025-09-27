@@ -21,7 +21,7 @@ def test_env_spaces_consistent(env):
     assert obs_space.shape[0] == env._obs_buf.shape[0]
     assert action_space.nvec[0] == 5
     assert action_space.nvec[1] == env.n_nodes
-    assert action_space.nvec[2] == 3
+    assert action_space.nvec[2] == len(Col)
     assert action_space.nvec[3] == env.max_qty + 1
 
 

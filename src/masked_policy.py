@@ -21,8 +21,8 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
       }
     Obs layout (EurobotDiscreteEnv._obs):
       [ t_left*10, blue_node, yellow_node,
-        blue_inv(3), yellow_inv(3),
-        pantries(3*K), pickups(3*M) ]
+        blue_inv(n_colors), yellow_inv(n_colors),
+        pantries(n_colors*K), pickups(n_colors*M) ]
     """
 
     def __init__(self, *args, **kwargs):
@@ -35,6 +35,7 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
         self.param_dim = int(nvec.sum())
         assert self.action_net.out_features == self.param_dim
         self.dist: MultiCategoricalDistribution = self.action_dist  # type: ignore
+        self.n_colors = int(nvec[2])
 
         # Head slices over concatenated logits
         cuts = np.cumsum(nvec)
@@ -44,7 +45,8 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
         K = int(self.mask_cfg["n_pantries"])
         M = int(self.mask_cfg["n_pickups"])
         self.n_nodes = int(self.mask_cfg["n_nodes"])
-        self.n_colors = 3
+        self.n_pantries = K
+        self.n_pickups = M
         self.max_qtyp1 = int(self.mask_cfg["max_qty"]) + 1
         self.capacity = float(self.mask_cfg.get("capacity", 999))
         self.allow_steal = bool(self.mask_cfg.get("allow_steal", True))
@@ -59,46 +61,52 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
         # Obs slices
         i = 0
         self.sl_t_by = (i, i + 3); i += 3
-        self.sl_inv_b = (i, i + 3); i += 3
-        self.sl_inv_y = (i, i + 3); i += 3
-        self.sl_pan = (i, i + 3 * K); i += 3 * K
-        self.sl_pick = (i, i + 3 * M); i += 3 * M
+        self.sl_inv_b = (i, i + self.n_colors); i += self.n_colors
+        self.sl_inv_y = (i, i + self.n_colors); i += self.n_colors
+        self.sl_pan = (i, i + self.n_colors * K); i += self.n_colors * K
+        self.sl_pick = (i, i + self.n_colors * M); i += self.n_colors * M
 
     # -------- mask helpers --------
     @staticmethod
-    def _safe_gather_sum3(t3: th.Tensor, idx_b: th.Tensor, valid_b: th.Tensor) -> th.Tensor:
+    def _safe_gather_sum_colors(t_colors: th.Tensor, idx_b: th.Tensor, valid_b: th.Tensor) -> th.Tensor:
         """
-        t3: (B, L, 3), idx_b: (B,), valid_b: (B,)
+        t_colors: (B, L, C), idx_b: (B,), valid_b: (B,)
         Returns (B,) = sum over color at chosen index, 0 if invalid.
         """
-        B = t3.size(0)
+        B = t_colors.size(0)
+        C = t_colors.size(-1)
+        if C == 0:
+            return th.zeros(B, device=t_colors.device, dtype=t_colors.dtype)
         idx_safe = th.clamp(idx_b, min=0)
-        out = t3.gather(1, idx_safe.view(B, 1, 1).expand(-1, 1, 3)).squeeze(1)  # (B,3)
-        out = out.sum(dim=1)  # (B,)
+        out = t_colors.gather(1, idx_safe.view(B, 1, 1).expand(-1, 1, C)).squeeze(1)
+        out = out.sum(dim=1)
         return out * valid_b
 
     @staticmethod
-    def _safe_gather_vec3(t3: th.Tensor, idx_b: th.Tensor, valid_b: th.Tensor) -> th.Tensor:
+    def _safe_gather_vec_colors(t_colors: th.Tensor, idx_b: th.Tensor, valid_b: th.Tensor) -> th.Tensor:
         """
-        t3: (B, L, 3), idx_b: (B,), valid_b: (B,)
-        Returns (B,3) = row at index, zeros if invalid.
+        t_colors: (B, L, C), idx_b: (B,), valid_b: (B,)
+        Returns (B,C) = row at index, zeros if invalid.
         """
-        B = t3.size(0)
+        B = t_colors.size(0)
+        C = t_colors.size(-1)
+        if C == 0:
+            return th.zeros((B, 0), device=t_colors.device, dtype=t_colors.dtype)
         idx_safe = th.clamp(idx_b, min=0)
-        out = t3.gather(1, idx_safe.view(B, 1, 1).expand(-1, 1, 3)).squeeze(1)  # (B,3)
+        out = t_colors.gather(1, idx_safe.view(B, 1, 1).expand(-1, 1, C)).squeeze(1)
         return out * valid_b.view(B, 1)
 
     def _build_masks(self, obs: th.Tensor) -> Tuple[th.Tensor, th.Tensor, th.Tensor, th.Tensor]:
         """
         Returns masks for heads: (m_verb, m_node, m_color, m_qty)
-        Shapes: (B,n_verbs), (B,n_nodes), (B,3), (B,max_qty+1)
+        Shapes: (B,n_verbs), (B,n_nodes), (B,n_colors), (B,max_qty+1)
         """
         B = obs.shape[0]
         device = obs.device
 
         # Parse obs
         blue_node = obs[:, self.sl_t_by[0] + 1].long()  # blue node id
-        inv_b = obs[:, self.sl_inv_b[0]: self.sl_inv_b[1]]  # (B,3)
+        inv_b = obs[:, self.sl_inv_b[0]: self.sl_inv_b[1]]  # (B,n_colors)
         pan_flat = obs[:, self.sl_pan[0]: self.sl_pan[1]]
         pick_flat = obs[:, self.sl_pick[0]: self.sl_pick[1]]
 
@@ -106,10 +114,10 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
         cap_left = (self.capacity - inv_sum).clamp_min(0)  # (B,)
 
         # Reshape pantries/pickups
-        K = (self.sl_pan[1] - self.sl_pan[0]) // 3
-        M = (self.sl_pick[1] - self.sl_pick[0]) // 3
-        pan = pan_flat.view(B, K, 3) if K > 0 else th.zeros((B, 0, 3), device=device)
-        pick = pick_flat.view(B, M, 3) if M > 0 else th.zeros((B, 0, 3), device=device)
+        K = self.n_pantries
+        M = self.n_pickups
+        pan = pan_flat.view(B, K, self.n_colors) if K > 0 else th.zeros((B, 0, self.n_colors), device=device)
+        pick = pick_flat.view(B, M, self.n_colors) if M > 0 else th.zeros((B, 0, self.n_colors), device=device)
 
         # Node class at current position
         at_pantry = self.pantry_idx[blue_node]  # (B,)
@@ -118,8 +126,8 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
         valid_pickup = at_pickup != -1
 
         # Stock sums at current node (0 if invalid)
-        pick_sum = self._safe_gather_sum3(pick, at_pickup, valid_pickup) if M > 0 else th.zeros(B, device=device)
-        pan_sum = self._safe_gather_sum3(pan, at_pantry, valid_pantry) if K > 0 else th.zeros(B, device=device)
+        pick_sum = self._safe_gather_sum_colors(pick, at_pickup, valid_pickup) if M > 0 else th.zeros(B, device=device)
+        pan_sum = self._safe_gather_sum_colors(pan, at_pantry, valid_pantry) if K > 0 else th.zeros(B, device=device)
 
         # Verb mask (indices follow robot.Verb enum)
         n_verbs = int(self.nvec[0].item())
@@ -154,7 +162,7 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
         #  - FLIP: allow target colors that can be produced via flipping existing stock
         m_color = th.ones((B, self.n_colors), dtype=th.bool, device=device)
         if M > 0:
-            pick_here = self._safe_gather_vec3(pick, at_pickup, valid_pickup)  # (B,3)
+            pick_here = self._safe_gather_vec_colors(pick, at_pickup, valid_pickup)
             m_color_pick = (pick_here > 0)
         else:
             m_color_pick = m_color.clone()

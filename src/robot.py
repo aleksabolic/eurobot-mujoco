@@ -68,5 +68,5 @@ class RobotProfile:
 @dataclass
 class RobotState:
     node: int
-    inv: np.ndarray                      # shape (3,) -> [blue, yellow, neutral]
+    inv: np.ndarray                      # shape (2,) -> [blue, yellow]
     event: Optional[Tuple[float, Callable[[], None]]] = None  # (remaining_time_s, on_finish)
