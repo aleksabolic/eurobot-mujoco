@@ -3,6 +3,11 @@ import numpy as np, cv2
 from pathlib import Path
 from eurobot_world import EurobotWorld, NodeType, Col
 
+try:
+    import tkinter as _tk
+except Exception:
+    _tk = None
+
 TABLE_X_MIN, TABLE_X_MAX = -1.5, 1.5
 TABLE_Y_MIN, TABLE_Y_MAX = -1.0, 1.0
 PANTRY_HALF = 0.10
@@ -24,6 +29,9 @@ class EurobotCV2Renderer:
     def __init__(self, world: EurobotWorld, size=(900, 600), background_path: Path | None = None, background_alpha: float = 0.35):
         self.world = world
         self.W, self.H = size
+        self._win_title = "Eurobot (cv2)"
+        self._win_created = False
+        self._win_centered = False
         self.pad_left = 20
         self.pad_right = 20
         self.pad_bottom = 20
@@ -156,5 +164,47 @@ class EurobotCV2Renderer:
                     (header_x, header_y + 36), cv2.FONT_HERSHEY_SIMPLEX, 0.5, BLK, 1, cv2.LINE_AA)
 
         if show:
-            cv2.imshow("Eurobot (cv2)", img); cv2.waitKey(1)
-        return img  # you can pipe this to a VideoWriter
+            # create the window once so we can move it
+            if not self._win_created:
+                # WINDOW_AUTOSIZE uses image size; GUI_NORMAL allows resizing (both are fine)
+                cv2.namedWindow(self._win_title, cv2.WINDOW_AUTOSIZE)
+                self._win_created = True
+
+            cv2.imshow(self._win_title, img)
+            cv2.waitKey(1)
+
+            # center only on the first visible frame
+            if not self._win_centered:
+                try:
+                    x, y, w, h = cv2.getWindowImageRect(self._win_title)  # OpenCV >=4.5
+                    sw, sh = self._screen_size()
+                    nx = max(0, (sw - w) // 2)
+                    ny = max(0, (sh - h) // 2)
+                    cv2.moveWindow(self._win_title, nx, ny)
+                    self._win_centered = True
+                except Exception:
+                    # if getWindowImageRect isn't available, still attempt to move using image size
+                    sw, sh = self._screen_size()
+                    nx = max(0, (sw - self.W) // 2)
+                    ny = max(0, (sh - self.H) // 2)
+                    cv2.moveWindow(self._win_title, nx, ny)
+                    self._win_centered = True
+
+        return img
+
+
+    def _screen_size(self) -> tuple[int, int]:
+        """Return (screen_w, screen_h) using Tk if available, else fall back to image size."""
+        if _tk is not None:
+            try:
+                root = _tk.Tk()
+                root.withdraw()
+                w = root.winfo_screenwidth()
+                h = root.winfo_screenheight()
+                root.destroy()
+                if w > 0 and h > 0:
+                    return int(w), int(h)
+            except Exception:
+                pass
+        # fallback: something sane
+        return 1920, 1080
