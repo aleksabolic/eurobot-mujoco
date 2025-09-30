@@ -49,7 +49,7 @@ class GreedyStashPolicy(Policy):
         target_color = world.pref_pick_color(actor_tag)
         node = world.nearest_pickup_with_stock(state.node, target_color)
         if node is None:
-            other = (1 - target_color) if target_color in (0,1) else 0
+            other = 1 - target_color
             node = world.nearest_pickup_with_stock(state.node, other)
             if node is None:
                 # wander to pantry
@@ -96,7 +96,7 @@ class BalancedPolicy(Policy):
         inv_sum = int(state.inv.sum())
         if inv_sum > 0 and rng.random() < 0.2 and prof.can_flip and inv_sum >= 2:
             # flip a few randomly
-            color = rng.integers(0,3)
+            color = rng.integers(0, state.inv.shape[0])
             qty = min(prof.max_action_qty, 2)
             return (int(Verb.FLIP), state.node, int(color), qty)
         # otherwise behave greedy but spread

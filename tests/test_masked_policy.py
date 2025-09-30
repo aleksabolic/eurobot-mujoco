@@ -28,12 +28,19 @@ def test_mask_shapes(env, mask_cfg):
     policy = make_policy(env, mask_cfg)
     obs, _ = env.reset(seed=0)
     obs_t = th.as_tensor(obs, dtype=th.float32).unsqueeze(0)
-    masks = policy._build_masks(obs_t)
-    m_verb, m_node, m_color, m_qty = masks
-    assert m_verb.shape == (1, env.action_space.nvec[0])
-    assert m_node.shape == (1, env.action_space.nvec[1])
-    assert m_color.shape == (1, env.action_space.nvec[2])
-    assert m_qty.shape == (1, env.action_space.nvec[3])
+    ctx = policy._build_context(obs_t)
+
+    verb_mask = policy._mask_verb(ctx)
+    assert verb_mask.shape == (1, env.action_space.nvec[0])
+
+    node_mask = policy._mask_node(ctx, th.tensor([Verb.MOVE], dtype=th.long))
+    assert node_mask.shape == (1, env.action_space.nvec[1])
+
+    color_mask = policy._mask_color(ctx, th.tensor([Verb.WAIT], dtype=th.long), ctx.blue_node.clone())
+    assert color_mask.shape == (1, env.action_space.nvec[2])
+
+    qty_mask = policy._mask_qty(ctx, th.tensor([Verb.WAIT], dtype=th.long), ctx.blue_node.clone(), th.zeros(1, dtype=th.long))
+    assert qty_mask.shape == (1, env.action_space.nvec[3])
 
 
 def test_pick_and_place_masks(env, mask_cfg):
@@ -46,8 +53,11 @@ def test_pick_and_place_masks(env, mask_cfg):
     _drain_env(env)
     obs = env._obs()
     obs_t = th.as_tensor(obs, dtype=th.float32).unsqueeze(0)
-    m_verb, _, _, _ = policy._build_masks(obs_t)
-    assert bool(m_verb[0, Verb.PICK])
+    ctx = policy._build_context(obs_t)
+    verb_mask = policy._mask_verb(ctx)
+    assert bool(verb_mask[0, Verb.PICK])
+    pick_node_mask = policy._mask_node(ctx, th.tensor([Verb.PICK], dtype=th.long))
+    assert bool(pick_node_mask[0, pickup])
 
     obs, _, _, _, _ = env.step(np.array([Verb.PICK, pickup, Col.BLUE, 2]))
     _drain_env(env)
@@ -58,8 +68,11 @@ def test_pick_and_place_masks(env, mask_cfg):
     _drain_env(env)
     obs = env._obs()
     obs_t = th.as_tensor(obs, dtype=th.float32).unsqueeze(0)
-    m_verb, _, _, _ = policy._build_masks(obs_t)
-    assert bool(m_verb[0, Verb.PLACE])
+    ctx = policy._build_context(obs_t)
+    verb_mask = policy._mask_verb(ctx)
+    assert bool(verb_mask[0, Verb.PLACE])
+    place_node_mask = policy._mask_node(ctx, th.tensor([Verb.PLACE], dtype=th.long))
+    assert bool(place_node_mask[0, pantry])
 
 
 def test_forward_and_evaluate(env, mask_cfg):

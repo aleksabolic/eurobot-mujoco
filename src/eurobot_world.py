@@ -1,7 +1,7 @@
 from __future__ import annotations
 from dataclasses import dataclass
 from enum import IntEnum
-from typing import List, Optional, Tuple, Callable, Dict
+from typing import List, Optional, Tuple, Callable, Dict, Any
 import numpy as np
 from robot import RobotProfile, RobotState, Verb
 from policies import GreedyStashPolicy
@@ -61,7 +61,11 @@ def build_nodes() -> List[Node]:
 
 # --------- Colors ----------
 class Col(IntEnum):
-    BLUE=0; YELLOW=1; NEUTRAL=2
+    BLUE = 0
+    YELLOW = 1
+
+
+NUM_COLORS = len(Col)
 
 # --------- World ----------
 class EurobotWorld:
@@ -112,11 +116,11 @@ class EurobotWorld:
         if seed is not None: self.rng = np.random.default_rng(seed)
         self.t_left = float(TIME_LIMIT_S)
 
-        self.blue   = RobotState(node=self.NEST_BLUE, inv=np.zeros(3, np.int16))
-        self.yellow = RobotState(node=self.NEST_YELL, inv=np.zeros(3, np.int16))
+        self.blue   = RobotState(node=self.NEST_BLUE, inv=np.zeros(NUM_COLORS, dtype=np.int16))
+        self.yellow = RobotState(node=self.NEST_YELL, inv=np.zeros(NUM_COLORS, dtype=np.int16))
 
-        self.pantries = np.zeros((len(self.PANTRIES), 3), dtype=np.int16)
-        self.pickups  = np.zeros((len(self.PICKUPS),  3), dtype=np.int16)
+        self.pantries = np.zeros((len(self.PANTRIES), NUM_COLORS), dtype=np.int16)
+        self.pickups  = np.zeros((len(self.PICKUPS),  NUM_COLORS), dtype=np.int16)
         # initial pickup stock: 2 blue + 2 yellow each
         self.pickups[:, Col.BLUE]   = 2
         self.pickups[:, Col.YELLOW] = 2
@@ -126,6 +130,7 @@ class EurobotWorld:
 
         # episode history for renderer (list of shallow snapshots)
         self.history: List[Dict] = []
+        self.last_invalid_detail: Optional[Dict[str, Any]] = None
         self._snap("reset")
 
     # ----- public step for BLUE -----
@@ -161,8 +166,8 @@ class EurobotWorld:
         color = int(color)
         if color < 0:
             color = 0
-        elif color > 2:
-            color = 2
+        elif color > NUM_COLORS - 1:
+            color = NUM_COLORS - 1
         qty = int(qty)
         if qty < 0:
             qty = 0
@@ -246,9 +251,7 @@ class EurobotWorld:
                     r -= self.rewards.invalid_action_penalty
                 self._snap(f"{actor_tag}_pick_invalid"); return r
             can_take = int(self.pickups[idx, color])
-            # rob.inv is length-3: avoid tiny numpy sum allocation by summing scalars
-            inv0 = int(rob.inv[0]); inv1 = int(rob.inv[1]); inv2 = int(rob.inv[2])
-            inv_sum = inv0 + inv1 + inv2
+            inv_sum = int(rob.inv[0]) + int(rob.inv[1])
             room = int(prof.capacity - inv_sum)
             take     = max(0, min(qty, can_take, room))
             if take > 0:
@@ -256,35 +259,68 @@ class EurobotWorld:
                 rob.inv[color]           += take
                 self._snap(f"{actor_tag}_pick")
             else:
+                detail = dict(
+                    reason="pickup_no_stock" if can_take <= 0 else "capacity_reached",
+                    actor=actor_tag,
+                    verb="PICK",
+                    color=int(color),
+                    qty=int(qty),
+                    available=int(can_take),
+                    capacity_left=int(room),
+                    inventory=self._inventory_snapshot(rob.inv),
+                )
+                detail.update(self._describe_node(node))
                 if actor_tag == "blue":
                     r -= self.rewards.invalid_action_penalty
-                self._snap(f"{actor_tag}_pick_empty")
+                    self.last_invalid_detail = detail
+                self._snap(f"{actor_tag}_pick_empty", invalid_detail=detail)
             return r
 
         if verb == Verb.PLACE:
             idx = self.pantry_idx[node]
             have = int(rob.inv[color])
             if have <= 0:
+                detail = dict(
+                    reason="empty_inventory",
+                    actor=actor_tag,
+                    verb="PLACE",
+                    color=int(color),
+                    qty=int(qty),
+                    inventory=self._inventory_snapshot(rob.inv),
+                )
+                detail.update(self._describe_node(node))
                 if actor_tag == "blue":
                     r -= self.rewards.invalid_action_penalty
-                self._snap(f"{actor_tag}_place_empty")
+                    self.last_invalid_detail = detail
+                self._snap(f"{actor_tag}_place_empty", invalid_detail=detail)
                 return r
 
             if idx != -1:  # placing at a pantry
-                p0 = int(self.pantries[idx, 0]); p1 = int(self.pantries[idx, 1]); p2 = int(self.pantries[idx, 2])
-                total_here = p0 + p1 + p2
+                p0 = int(self.pantries[idx, 0]); p1 = int(self.pantries[idx, 1])
+                total_here = p0 + p1
                 room = max(0, self.pantry_cap - total_here)
                 put = max(0, min(qty, have, room))
                 if put > 0:
                     self.pantries[idx, color] += put
                     rob.inv[color]            -= put
-                    if actor_tag=="blue" and color in (Col.BLUE, Col.NEUTRAL):
+                    if actor_tag=="blue" and color == Col.BLUE:
                         r += self.rewards.pantry_bonus * put
                     self._snap(f"{actor_tag}_place")
                 else:
+                    detail = dict(
+                        reason="no_room" if room <= 0 else "zero_qty",
+                        actor=actor_tag,
+                        verb="PLACE",
+                        color=int(color),
+                        qty=int(qty),
+                        room=int(room),
+                        inventory=self._inventory_snapshot(rob.inv),
+                    )
+                    detail.update(self._describe_node(node))
                     if actor_tag == "blue":
                         r -= self.rewards.invalid_action_penalty
-                    self._snap(f"{actor_tag}_place_full")
+                        self.last_invalid_detail = detail
+                    self._snap(f"{actor_tag}_place_full", invalid_detail=detail)
                 return r
 
             if actor_tag=="blue" and node == self.NEST_BLUE:
@@ -312,7 +348,19 @@ class EurobotWorld:
 
             if actor_tag == "blue":
                 r -= self.rewards.invalid_action_penalty
-            self._snap(f"{actor_tag}_place_invalid")
+                detail = dict(
+                    reason="invalid_location",
+                    actor=actor_tag,
+                    verb="PLACE",
+                    color=int(color),
+                    qty=int(qty),
+                    inventory=self._inventory_snapshot(rob.inv),
+                )
+                detail.update(self._describe_node(node))
+                self.last_invalid_detail = detail
+                self._snap(f"{actor_tag}_place_invalid", invalid_detail=detail)
+            else:
+                self._snap(f"{actor_tag}_place_invalid")
             return r
 
         if verb == Verb.FLIP:
@@ -321,14 +369,24 @@ class EurobotWorld:
                     r -= self.rewards.invalid_action_penalty
                 self._snap(f"{actor_tag}_flip_blocked"); return r
             # move from most abundant non-target to target
-            src_candidates = [Col.BLUE, Col.YELLOW, Col.NEUTRAL]
+            src_candidates = [Col.BLUE, Col.YELLOW]
             if color in src_candidates: src_candidates.remove(Col(color))
             src = int(src_candidates[int(np.argmax(rob.inv[src_candidates]))])
             k = min(qty, int(rob.inv[src]))
             if k <= 0:
+                detail = dict(
+                    reason="flip_no_source",
+                    actor=actor_tag,
+                    verb="FLIP",
+                    color=int(color),
+                    qty=int(qty),
+                    inventory=self._inventory_snapshot(rob.inv),
+                )
+                detail.update(self._describe_node(node))
                 if actor_tag == "blue":
                     r -= self.rewards.invalid_action_penalty
-                self._snap(f"{actor_tag}_flip_empty")
+                    self.last_invalid_detail = detail
+                self._snap(f"{actor_tag}_flip_empty", invalid_detail=detail)
                 return r
             rob.inv[src]   -= k
             rob.inv[color] += k
@@ -346,8 +404,7 @@ class EurobotWorld:
                     r -= self.rewards.invalid_action_penalty
                 self._snap(f"{actor_tag}_steal_invalid"); return r
             have = int(self.pantries[idx, color])
-            inv0 = int(rob.inv[0]); inv1 = int(rob.inv[1]); inv2 = int(rob.inv[2])
-            inv_sum = inv0 + inv1 + inv2
+            inv_sum = int(rob.inv[0]) + int(rob.inv[1])
             room = int(prof.capacity - inv_sum)
             take = max(0, min(qty, have, room))
             if take > 0:
@@ -355,15 +412,39 @@ class EurobotWorld:
                 rob.inv[color]            += take
                 self._snap(f"{actor_tag}_steal")
             else:
+                detail = dict(
+                    reason="steal_empty" if have <= 0 else "capacity_reached",
+                    actor=actor_tag,
+                    verb="STEAL",
+                    color=int(color),
+                    qty=int(qty),
+                    available=int(have),
+                    capacity_left=int(room),
+                    inventory=self._inventory_snapshot(rob.inv),
+                )
+                detail.update(self._describe_node(node))
                 if actor_tag == "blue":
                     r -= self.rewards.invalid_action_penalty
-                self._snap(f"{actor_tag}_steal_empty")
+                    self.last_invalid_detail = detail
+                self._snap(f"{actor_tag}_steal_empty", invalid_detail=detail)
             return r
 
         if verb == Verb.WAIT:
             if actor_tag == "blue":
                 r -= self.rewards.invalid_action_penalty
-            self._snap(f"{actor_tag}_wait")
+            detail = dict(
+                reason="wait",
+                actor=actor_tag,
+                verb="WAIT",
+                qty=int(qty),
+                inventory=self._inventory_snapshot(rob.inv),
+            )
+            detail.update(self._describe_node(node))
+            if actor_tag == "blue":
+                self.last_invalid_detail = detail
+                self._snap(f"{actor_tag}_wait", invalid_detail=detail)
+            else:
+                self._snap(f"{actor_tag}_wait")
             return r
 
         return r
@@ -408,9 +489,9 @@ class EurobotWorld:
 
     #TODO move this somewhere else
     # ----- helpers -----
-    def _snap(self, tag: str):
-        # return # slows down learning 
-        self.history.append(dict(
+    def _snap(self, tag: str, **extra):
+        # return # slows down learning
+        snap = dict(
             tag=tag,
             t_left=float(self.t_left),
             blue_node=int(self.blue.node),
@@ -419,7 +500,10 @@ class EurobotWorld:
             yellow_inv=self.yellow.inv.copy(),
             pantries=self.pantries.copy(),
             pickups=self.pickups.copy(),
-        ))
+        )
+        if extra:
+            snap["extra"] = extra
+        self.history.append(snap)
 
     def _nearest(self, start: int, pool: List[int]) -> int:
         i = int(np.argmin(self.D[start, pool] + 1e-6))
@@ -428,6 +512,14 @@ class EurobotWorld:
     def _pickup_avail(self, node: int, color: int) -> int:
         idx = self.pickup_idx[node]
         return 0 if idx == -1 else int(self.pickups[idx, color])
+    
+    def _describe_node(self, node: int) -> Dict[str, Any]:
+        node_idx = int(np.clip(node, 0, self.N - 1))
+        n = self.nodes[node_idx]
+        return dict(node=node_idx, node_name=str(n.name), node_kind=n.kind.name)
+
+    def _inventory_snapshot(self, inv: np.ndarray) -> Dict[str, int]:
+        return {Col(i).name.lower(): int(inv[i]) for i in range(NUM_COLORS)}
     
     # --- policy helpers (thin wrappers) ---
     def pickup_avail(self, node: int, color: int) -> int:
@@ -452,9 +544,9 @@ class EurobotWorld:
         scores=[]
         rob = (self.yellow if actor_tag=="yellow" else self.blue)
         for k,i in enumerate(self.PANTRIES):
-            # pantries[k] is length-3; sum explicitly
-            p0 = int(self.pantries[k, 0]); p1 = int(self.pantries[k, 1]); p2 = int(self.pantries[k, 2])
-            total = p0 + p1 + p2
+            # pantries[k] stores counts per color; sum explicitly
+            p0 = int(self.pantries[k, 0]); p1 = int(self.pantries[k, 1])
+            total = p0 + p1
             room  = max(0, self.pantry_cap - total) if self.pantry_cap > 0 else 999
             if room <= 0:
                 continue
@@ -462,7 +554,7 @@ class EurobotWorld:
             spread_pen = 0.0
             if prefer_spread:
                 # penalize heavy current color presence
-                spread_pen = float(self.pantries[k, Col.BLUE]**2 + self.pantries[k, Col.YELLOW]**2 + self.pantries[k, Col.NEUTRAL]**2) * 0.05
+                spread_pen = float(self.pantries[k, Col.BLUE]**2 + self.pantries[k, Col.YELLOW]**2) * 0.05
             scores.append((1.0*room - 0.5*dist - spread_pen, i))
         if not scores:
             return self.PANTRIES[0]
@@ -483,11 +575,6 @@ class EurobotWorld:
         return cand[0][1]
 
     def prefer_steal_color(self, actor_tag: str, pantry_node: int) -> int:
-        # steal opponent color first; if empty, steal neutral
+        # steal opponent color when available (only two colors remain)
         opp = Col.BLUE if actor_tag=="yellow" else Col.YELLOW
-        k = self.pantry_idx[pantry_node]
-        if k != -1 and int(self.pantries[k, opp]) > 0:
-            return int(opp)
-        if k != -1 and int(self.pantries[k, Col.NEUTRAL]) > 0:
-            return int(Col.NEUTRAL)
         return int(opp)

@@ -51,14 +51,14 @@ def test_thief_policy_prefers_steal(world):
 
 def test_balanced_policy_flip_and_place(world):
     policy = BalancedPolicy()
-    world.blue.inv[:] = np.array([2, 0, 0], dtype=world.blue.inv.dtype)
+    world.blue.inv[:] = np.array([2, 0], dtype=world.blue.inv.dtype)
     # ensure flip branch triggers
     flip_rng = DummyRng(value=0.0)
     action_flip = policy.next_action("blue", world, world.blue, flip_rng)
     assert action_flip[0] == Verb.FLIP
 
     # ensure place branch when random >= 0.2
-    world.blue.inv[:] = np.array([1, 0, 0], dtype=world.blue.inv.dtype)
+    world.blue.inv[:] = np.array([1, 0], dtype=world.blue.inv.dtype)
     place_rng = DummyRng(value=0.5)
     action_place = policy.next_action("blue", world, world.blue, place_rng)
     assert action_place[0] == Verb.PLACE

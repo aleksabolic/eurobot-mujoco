@@ -45,8 +45,13 @@ def mask_cfg(world, robot_profiles):
         n_nodes=world.N,
         max_qty=int(blue_prof.max_action_qty),
         capacity=int(blue_prof.capacity),
+        pantry_cap=int(world.pantry_cap),
         allow_steal=bool(world.allow_steal),
         can_flip=bool(blue_prof.can_flip),
         pantry_idx=world.pantry_idx.tolist(),
         pickup_idx=world.pickup_idx.tolist(),
+        pantry_nodes=world.PANTRIES,
+        pickup_nodes=world.PICKUPS,
+        nest_blue=world.NEST_BLUE,
+        nest_yellow=world.NEST_YELL,
     )

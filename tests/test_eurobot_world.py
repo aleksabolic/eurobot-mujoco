@@ -50,13 +50,16 @@ def test_reset_initial_state(world):
     assert world.t_left == pytest.approx(100.0)
     assert int(world.blue.node) == world.NEST_BLUE
     assert int(world.yellow.node) == world.NEST_YELL
+    assert len(Col) == 2
+    assert world.blue.inv.shape == (len(Col),)
+    assert world.pantries.shape[1] == len(Col)
+    assert world.pickups.shape[1] == len(Col)
     assert np.all(world.blue.inv == 0)
     assert np.all(world.yellow.inv == 0)
     assert np.all(world.pantries == 0)
     # each pickup starts with 2 blue + 2 yellow
     assert np.all(world.pickups[:, Col.BLUE] == 2)
     assert np.all(world.pickups[:, Col.YELLOW] == 2)
-    assert np.all(world.pickups[:, Col.NEUTRAL] == 0)
 
 
 def test_move_and_idle_penalty(world):
@@ -91,12 +94,14 @@ def test_pick_success_and_empty_penalty(world):
     assert world.pickup_avail(pickup, Col.BLUE) == pre_stock - 1
 
     # picking a color with no stock should incur penalty
-    penalty, _ = world.step_blue((int(Verb.PICK), pickup, int(Col.NEUTRAL), 1))
+    # zero out yellow to ensure empty pick triggers penalty
+    world.pickups[world.pickup_idx[pickup], Col.YELLOW] = 0
+    penalty, _ = world.step_blue((int(Verb.PICK), pickup, int(Col.YELLOW), 1))
     _drain_events(world)
     extra = world.history[-1]["tag"] if world.history else ""
     assert penalty <= 0.0
     assert extra.endswith("pick_empty")
-    assert world.blue.inv[Col.NEUTRAL] == 0
+    assert world.blue.inv[Col.YELLOW] == 0
 
 
 def test_place_to_pantry_and_nest(world):
@@ -233,7 +238,7 @@ def test_helper_queries(world):
     world.pantries[:] = 0
     spacious = world.PANTRIES[0]
     crowded = world.PANTRIES[1]
-    world.pantries[world.pantry_idx[crowded], :] = np.array([PANTRY_CAP, 0, 0], dtype=world.pantries.dtype)
+    world.pantries[world.pantry_idx[crowded], :] = np.array([PANTRY_CAP, 0], dtype=world.pantries.dtype)
     world.blue.node = crowded
     best = world.best_pantry_for("blue", prefer_spread=True)
     assert best == spacious

@@ -130,17 +130,32 @@ if __name__ == "__main__":
     M = len(_tmp.world.PICKUPS)
     n_nodes = _tmp.n_nodes
     max_qty = _tmp.max_qty
-    capacity = int(_tmp.world.blue_prof.capacity)
-    allow_steal = bool(_tmp.world.allow_steal)
-    can_flip = bool(_tmp.world.blue_prof.can_flip)
+    tmp_world = _tmp.world
+    capacity = int(tmp_world.blue_prof.capacity)
+    allow_steal = bool(tmp_world.allow_steal)
+    can_flip = bool(tmp_world.blue_prof.can_flip)
+    pantry_cap = int(tmp_world.pantry_cap)
+    nest_blue = tmp_world.NEST_BLUE
+    nest_yellow = tmp_world.NEST_YELL
     # build node->local index lookups (length n_nodes)
-    pantry_idx = _tmp.world.pantry_idx.tolist()
-    pickup_idx = _tmp.world.pickup_idx.tolist()
+    pantry_idx = tmp_world.pantry_idx.tolist()
+    pickup_idx = tmp_world.pickup_idx.tolist()
     del _tmp
     mask_cfg = dict(
-        n_pantries=K, n_pickups=M, n_nodes=n_nodes, max_qty=max_qty,
-        capacity=capacity, allow_steal=allow_steal, can_flip=can_flip,
-        pantry_idx=pantry_idx, pickup_idx=pickup_idx,
+        n_pantries=K,
+        n_pickups=M,
+        n_nodes=n_nodes,
+        max_qty=max_qty,
+        capacity=capacity,
+        pantry_cap=pantry_cap,
+        allow_steal=allow_steal,
+        can_flip=can_flip,
+        pantry_idx=pantry_idx,
+        pickup_idx=pickup_idx,
+        pantry_nodes=tmp_world.PANTRIES,
+        pickup_nodes=tmp_world.PICKUPS,
+        nest_blue=nest_blue,
+        nest_yellow=nest_yellow,
     )
 
     env = DummyVecEnv(env_fns)

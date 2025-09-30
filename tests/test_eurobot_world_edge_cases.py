@@ -138,12 +138,12 @@ def test_action_arguments_are_clamped():
     world.step_blue((int(Verb.MOVE), first_pickup, int(Col.BLUE), 0))
     _drain_events(world)
     idx_pick = world.pickup_idx[first_pickup]
-    world.pickups[idx_pick, Col.NEUTRAL] = 3
+    world.pickups[idx_pick, Col.YELLOW] = 3
 
-    start_neutral = int(world.blue.inv[Col.NEUTRAL])
+    start_yellow = int(world.blue.inv[Col.YELLOW])
     world.step_blue((int(Verb.PICK), first_pickup, 99, 1))
     _drain_events(world)
-    assert world.blue.inv[Col.NEUTRAL] == start_neutral + 1
+    assert world.blue.inv[Col.YELLOW] == start_yellow + 1
 
     start_blue = int(world.blue.inv[Col.BLUE])
     world.step_blue((int(Verb.PICK), first_pickup, -5, 1))

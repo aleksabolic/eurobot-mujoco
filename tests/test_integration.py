@@ -91,17 +91,18 @@ def test_ppo_pick_flip_place_sequence(mask_cfg):
     pantry_local = int(env.world.pantry_idx[pantry_node])
 
     action_plan = [
-        np.array([int(Verb.MOVE), pickup_node, int(Col.YELLOW), 0]),
+        np.array([int(Verb.MOVE), pickup_node, 0, 0]),
         np.array([int(Verb.PICK), pickup_node, int(Col.YELLOW), 1]),
         np.array([int(Verb.FLIP), pickup_node, int(Col.BLUE), 1]),
-        np.array([int(Verb.MOVE), pantry_node, int(Col.BLUE), 0]),
+        np.array([int(Verb.MOVE), pantry_node, 0, 0]),
         np.array([int(Verb.PLACE), pantry_node, int(Col.BLUE), 1]),
     ]
 
     for expected in action_plan:
         obs_tensor = torch.as_tensor(obs, dtype=torch.float32)
-        m_verb, _, _, _ = model.policy._build_masks(obs_tensor)
-        assert bool(m_verb[0, expected[0]])
+        ctx = model.policy._build_context(obs_tensor)
+        verb_mask = model.policy._mask_verb(ctx)
+        assert bool(verb_mask[0, expected[0]])
         _force_policy_action(model.policy, expected)
         action, _ = model.predict(obs, deterministic=True)
         assert action.shape == (1, 4)
