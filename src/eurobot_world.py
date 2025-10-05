@@ -45,8 +45,8 @@ PICKUPS_POS = {
     "P7": np.array([-0.40, -0.825]), 
     "P8": np.array([ 0.40, -0.825]),
 }
-NESTS = {"blue": np.array([ 1.20,  0.80]),
-         "yellow": np.array([-1.20,  0.80])}
+NESTS = {"blue": np.array([ 1.20,  0.775]),
+         "yellow": np.array([-1.20,  0.775])}
 
 def build_nodes() -> List[Node]:
     nodes: List[Node] = [
