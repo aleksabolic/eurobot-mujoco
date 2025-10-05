@@ -127,6 +127,7 @@ class EurobotWorld:
 
         self.nest_blue_counted = 0 
         self.nest_yellow_counted = 0
+        self.blue_return = 0.0
 
         # episode history for renderer (list of shallow snapshots)
         self.history: List[Dict] = []
@@ -144,11 +145,18 @@ class EurobotWorld:
         dt, r_gain = self._advance_until_next()  # dt > 0 when something happens
         r += r_gain
 
-        r -= self.rewards.time_penalty * dt
+        if dt > 0.0:
+            time_penalty = self.rewards.time_penalty * dt
+            if abs(time_penalty) > 1e-9:
+                r -= time_penalty
+                self._add_blue_return(-time_penalty)
 
         done = (self.t_left <= 1e-9)
         if done:
-            r += self._terminal_bonus()
+            bonus = self._terminal_bonus()
+            if abs(bonus) > 1e-9:
+                self._add_blue_return(bonus)
+            r += bonus
             self._snap("end")
         return float(r), bool(done)
 
@@ -185,7 +193,9 @@ class EurobotWorld:
             # MOVE to same node → treat as invalid idle action
             if verb == Verb.MOVE:
                 if actor_tag == "blue":
-                    r -= self.rewards.invalid_action_penalty
+                    penalty = self.rewards.invalid_action_penalty
+                    r -= penalty
+                    self._add_blue_return(-penalty)
                 self._snap(f"{actor_tag}_move_idle")
                 return r
             did_move = (t_move > 0.0)
@@ -248,7 +258,9 @@ class EurobotWorld:
             idx = self.pickup_idx[node]
             if idx == -1:
                 if actor_tag == "blue":
-                    r -= self.rewards.invalid_action_penalty
+                    penalty = self.rewards.invalid_action_penalty
+                    r -= penalty
+                    self._add_blue_return(-penalty)
                 self._snap(f"{actor_tag}_pick_invalid"); return r
             can_take = int(self.pickups[idx, color])
             inv_sum = int(rob.inv[0]) + int(rob.inv[1])
@@ -271,7 +283,9 @@ class EurobotWorld:
                 )
                 detail.update(self._describe_node(node))
                 if actor_tag == "blue":
-                    r -= self.rewards.invalid_action_penalty
+                    penalty = self.rewards.invalid_action_penalty
+                    r -= penalty
+                    self._add_blue_return(-penalty)
                     self.last_invalid_detail = detail
                 self._snap(f"{actor_tag}_pick_empty", invalid_detail=detail)
             return r
@@ -290,7 +304,9 @@ class EurobotWorld:
                 )
                 detail.update(self._describe_node(node))
                 if actor_tag == "blue":
-                    r -= self.rewards.invalid_action_penalty
+                    penalty = self.rewards.invalid_action_penalty
+                    r -= penalty
+                    self._add_blue_return(-penalty)
                     self.last_invalid_detail = detail
                 self._snap(f"{actor_tag}_place_empty", invalid_detail=detail)
                 return r
@@ -304,7 +320,9 @@ class EurobotWorld:
                     self.pantries[idx, color] += put
                     rob.inv[color]            -= put
                     if actor_tag=="blue" and color == Col.BLUE:
-                        r += self.rewards.pantry_bonus * put
+                        reward = self.rewards.pantry_bonus * put
+                        r += reward
+                        self._add_blue_return(reward)
                     self._snap(f"{actor_tag}_place")
                 else:
                     detail = dict(
@@ -318,7 +336,9 @@ class EurobotWorld:
                     )
                     detail.update(self._describe_node(node))
                     if actor_tag == "blue":
-                        r -= self.rewards.invalid_action_penalty
+                        penalty = self.rewards.invalid_action_penalty
+                        r -= penalty
+                        self._add_blue_return(-penalty)
                         self.last_invalid_detail = detail
                     self._snap(f"{actor_tag}_place_full", invalid_detail=detail)
                 return r
@@ -329,10 +349,14 @@ class EurobotWorld:
                 if delta > 0:
                     rob.inv[color]         -= delta
                     self.nest_blue_counted += delta
-                    r += self.rewards.nest_bonus * delta
+                    reward = self.rewards.nest_bonus * delta
+                    r += reward
+                    self._add_blue_return(reward)
                     self._snap(f"{actor_tag}_place")
                 else:
-                    r -= self.rewards.invalid_action_penalty
+                    penalty = self.rewards.invalid_action_penalty
+                    r -= penalty
+                    self._add_blue_return(-penalty)
                     self._snap(f"{actor_tag}_place_nest_full")
                 return r
 
@@ -347,7 +371,9 @@ class EurobotWorld:
                 return r
 
             if actor_tag == "blue":
-                r -= self.rewards.invalid_action_penalty
+                penalty = self.rewards.invalid_action_penalty
+                r -= penalty
+                self._add_blue_return(-penalty)
                 detail = dict(
                     reason="invalid_location",
                     actor=actor_tag,
@@ -366,7 +392,9 @@ class EurobotWorld:
         if verb == Verb.FLIP:
             if not prof.can_flip:
                 if actor_tag == "blue":
-                    r -= self.rewards.invalid_action_penalty
+                    penalty = self.rewards.invalid_action_penalty
+                    r -= penalty
+                    self._add_blue_return(-penalty)
                 self._snap(f"{actor_tag}_flip_blocked"); return r
             # move from most abundant non-target to target
             src_candidates = [Col.BLUE, Col.YELLOW]
@@ -384,7 +412,9 @@ class EurobotWorld:
                 )
                 detail.update(self._describe_node(node))
                 if actor_tag == "blue":
-                    r -= self.rewards.invalid_action_penalty
+                    penalty = self.rewards.invalid_action_penalty
+                    r -= penalty
+                    self._add_blue_return(-penalty)
                     self.last_invalid_detail = detail
                 self._snap(f"{actor_tag}_flip_empty", invalid_detail=detail)
                 return r
@@ -396,12 +426,16 @@ class EurobotWorld:
         if verb == Verb.STEAL:
             if not self.allow_steal:
                 if actor_tag == "blue":
-                    r -= self.rewards.invalid_action_penalty
+                    penalty = self.rewards.invalid_action_penalty
+                    r -= penalty
+                    self._add_blue_return(-penalty)
                 self._snap(f"{actor_tag}_steal_blocked"); return r
             idx = self.pantry_idx[node]
             if idx == -1:
                 if actor_tag == "blue":
-                    r -= self.rewards.invalid_action_penalty
+                    penalty = self.rewards.invalid_action_penalty
+                    r -= penalty
+                    self._add_blue_return(-penalty)
                 self._snap(f"{actor_tag}_steal_invalid"); return r
             have = int(self.pantries[idx, color])
             inv_sum = int(rob.inv[0]) + int(rob.inv[1])
@@ -424,14 +458,18 @@ class EurobotWorld:
                 )
                 detail.update(self._describe_node(node))
                 if actor_tag == "blue":
-                    r -= self.rewards.invalid_action_penalty
+                    penalty = self.rewards.invalid_action_penalty
+                    r -= penalty
+                    self._add_blue_return(-penalty)
                     self.last_invalid_detail = detail
                 self._snap(f"{actor_tag}_steal_empty", invalid_detail=detail)
             return r
 
         if verb == Verb.WAIT:
             if actor_tag == "blue":
-                r -= self.rewards.invalid_action_penalty
+                penalty = self.rewards.invalid_action_penalty
+                r -= penalty
+                self._add_blue_return(-penalty)
             detail = dict(
                 reason="wait",
                 actor=actor_tag,
@@ -488,8 +526,13 @@ class EurobotWorld:
         return float(blue_score), float(yellow_score)
 
     # ----- helpers -----
+    def _add_blue_return(self, delta: float):
+        if abs(delta) > 1e-9:
+            self.blue_return = float(self.blue_return + delta)
+
     def _snap(self, tag: str, **extra):
         # return # slows down learning
+        blue_score, yellow_score = self.final_scores()
         snap = dict(
             tag=tag,
             t_left=float(self.t_left),
@@ -501,6 +544,9 @@ class EurobotWorld:
             pickups=self.pickups.copy(),
             nest_blue=int(self.nest_blue_counted),
             nest_yellow=int(self.nest_yellow_counted),
+            blue_score=float(blue_score),
+            yellow_score=float(yellow_score),
+            blue_return=float(self.blue_return),
         )
         if extra:
             snap["extra"] = extra

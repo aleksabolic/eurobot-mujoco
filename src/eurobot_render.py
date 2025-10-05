@@ -68,6 +68,36 @@ class EurobotCV2Renderer:
     def _l2p(self, L):
         return int(round(L*self.scale))
 
+    def _scores_from_snapshot(self, pantries, nest_blue: int, nest_yellow: int,
+                               blue_node: int, yellow_node: int) -> tuple[float, float]:
+        pan = np.asarray(pantries)
+        if pan.ndim == 0:
+            pan = pan.reshape(0, len(Col))
+        if pan.ndim == 1:
+            pan = pan.reshape(-1, len(Col))
+
+        rewards = self.world.rewards
+        blue_pantry = int(pan[:, Col.BLUE].sum()) if pan.size else 0
+        yellow_pantry = int(pan[:, Col.YELLOW].sum()) if pan.size else 0
+
+        blue_score = rewards.pantry_bonus * blue_pantry + rewards.nest_bonus * int(nest_blue)
+        yellow_score = rewards.pantry_bonus * yellow_pantry + rewards.nest_bonus * int(nest_yellow)
+
+        for row in pan:
+            b = int(row[Col.BLUE])
+            y = int(row[Col.YELLOW])
+            if b > y:
+                blue_score += rewards.interest_bonus
+            elif y > b:
+                yellow_score += rewards.interest_bonus
+
+        if int(blue_node) == self.world.NEST_BLUE:
+            blue_score += rewards.finish_in_nest_bonus
+        if int(yellow_node) == self.world.NEST_YELL:
+            yellow_score += rewards.finish_in_nest_bonus
+
+        return float(blue_score), float(yellow_score)
+
     def draw_snapshot(self, idx=-1, show=False):
         img = np.full((self.H, self.W, 3), 255, np.uint8)
         # info banner background
@@ -95,6 +125,14 @@ class EurobotCV2Renderer:
             t_left = s["t_left"]
             nest_blue = int(s.get("nest_blue", self.world.nest_blue_counted))
             nest_yellow = int(s.get("nest_yellow", self.world.nest_yellow_counted))
+            if "blue_score" in s and "yellow_score" in s:
+                blue_score = float(s["blue_score"])
+                yellow_score = float(s["yellow_score"])
+            else:
+                blue_score, yellow_score = self._scores_from_snapshot(
+                    pantries, nest_blue, nest_yellow, blue_node, yellow_node
+                )
+            blue_return = float(s.get("blue_return", getattr(self.world, "blue_return", 0.0)))
         else:
             blue_node, yellow_node = self.world.blue.node, self.world.yellow.node
             pantries, pickups = self.world.pantries, self.world.pickups
@@ -102,6 +140,8 @@ class EurobotCV2Renderer:
             t_left = self.world.t_left
             nest_blue = int(self.world.nest_blue_counted)
             nest_yellow = int(self.world.nest_yellow_counted)
+            blue_score, yellow_score = self.world.final_scores()
+            blue_return = float(getattr(self.world, "blue_return", 0.0))
 
         # nests
         label_pad = 4
@@ -186,6 +226,14 @@ class EurobotCV2Renderer:
                     (header_x, header_y + 18), cv2.FONT_HERSHEY_SIMPLEX, 0.5, BLK, 1, cv2.LINE_AA)
         cv2.putText(img, f"YELL inv: B{int(yellow_inv[Col.BLUE])} Y{int(yellow_inv[Col.YELLOW])}",
                     (header_x, header_y + 36), cv2.FONT_HERSHEY_SIMPLEX, 0.5, BLK, 1, cv2.LINE_AA)
+
+        score_x = self.pad_left + 320
+        cv2.putText(img, f"BLUE score: {blue_score:.1f}", (score_x, header_y),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, BLK, 1, cv2.LINE_AA)
+        cv2.putText(img, f"YELL score: {yellow_score:.1f}", (score_x, header_y + 18),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, BLK, 1, cv2.LINE_AA)
+        cv2.putText(img, f"BLUE RL return: {blue_return:.3f}", (score_x, header_y + 36),
+                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, BLK, 1, cv2.LINE_AA)
 
         if show:
             # create the window once so we can move it
