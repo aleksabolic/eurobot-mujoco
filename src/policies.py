@@ -1,8 +1,10 @@
 from __future__ import annotations
-from typing import Optional, Tuple, Dict, Any, List
+from typing import Optional, Tuple, Dict, Any, List, Sequence, Union
 import json
 import numpy as np
 from robot import RobotProfile, Verb, RobotState
+
+ActionLike = Union[Dict[str, Any], Sequence[Any]]
 
 # -------- Policy interface --------
 class Policy:
@@ -28,6 +30,7 @@ class Policy:
         if kind == "greedy_stash": return GreedyStashPolicy(params)
         if kind == "thief":        return ThiefPolicy(params)
         if kind == "balanced":     return BalancedPolicy(params)
+        if kind == "static":       return StaticPolicy(params)
         return GreedyStashPolicy(params)
 
 # -------- Concrete policies --------
@@ -115,6 +118,196 @@ class BalancedPolicy(Policy):
             qty = max(1, min(avail, prof.max_action_qty, prof.capacity - inv_sum))
             return (int(Verb.PICK), node, int(target_color), qty)
         return (int(Verb.MOVE), node, int(target_color), 0)
+
+
+class StaticPolicy(Policy):
+    name = "static"
+
+    # deterministic loop that alternates between two pickups/pantries
+    DEFAULT_SEQUENCE: List[Dict[str, Any]] = [
+        {"verb": "MOVE",  "node": "P1"},
+        {"verb": "PICK",  "node": "P1",      "color": "yellow", "qty": 2},
+        {"verb": "MOVE",  "node": "PantryA"},
+        {"verb": "PLACE", "node": "PantryA",  "color": "yellow", "qty": 2},
+        {"verb": "MOVE",  "node": "P3"},
+        {"verb": "PICK",  "node": "P3",      "color": "yellow", "qty": 2},
+        {"verb": "MOVE",  "node": "PantryB"},
+        {"verb": "PLACE", "node": "PantryB",  "color": "yellow", "qty": 2},
+    ]
+
+    def __init__(self, params: Optional[Dict[str, Any]] = None):
+        super().__init__(params)
+        seq_cfg = self.params.get("sequence")
+        if seq_cfg is None:
+            seq_cfg = self.DEFAULT_SEQUENCE
+        if not isinstance(seq_cfg, (list, tuple)):
+            raise ValueError("StaticPolicy requires 'sequence' to be a list or tuple of actions")
+        self._sequence_cfg = list(seq_cfg)
+        self._loop: bool = bool(self.params.get("loop", True))
+        self._fallback_cfg: Optional[ActionLike] = self.params.get("fallback_action")
+
+        self._compiled_plan: Optional[List[Tuple[int, int, int, int]]] = None
+        self._node_lookup: Dict[str, int] = {}
+        self._cursor: int = 0
+        self._exhausted: bool = False
+        self._last_t_left: Optional[float] = None
+
+    def next_action(self,
+                    actor_tag: str,
+                    world: "EurobotWorld",  # type: ignore
+                    state: RobotState,
+                    rng: np.random.Generator) -> Tuple[int, int, int, int]:
+        if self._compiled_plan is None:
+            self._compile_plan(world)
+
+        if self._last_t_left is None or world.t_left > self._last_t_left + 1e-6:
+            self._cursor = 0
+            self._exhausted = False
+        self._last_t_left = float(world.t_left)
+
+        if not self._compiled_plan:
+            return self._fallback_action(world, state)
+
+        if self._exhausted and not self._loop:
+            return self._fallback_action(world, state)
+
+        if self._cursor >= len(self._compiled_plan):
+            if self._loop:
+                self._cursor = 0
+            else:
+                self._exhausted = True
+                return self._fallback_action(world, state)
+
+        action = self._compiled_plan[self._cursor]
+        self._cursor += 1
+        return action
+
+    # ---- helpers ----
+    def _compile_plan(self, world: "EurobotWorld") -> None:  # type: ignore
+        self._node_lookup = {n.name.lower(): idx for idx, n in enumerate(world.nodes)}
+        self._compiled_plan = []
+        for item in self._sequence_cfg:
+            action = self._parse_action(world, item)
+            self._compiled_plan.append(action)
+
+    def _parse_action(self,
+                      world: "EurobotWorld",  # type: ignore
+                      spec: ActionLike,
+                      *,
+                      allow_missing_node: bool = False,
+                      default_node: Optional[int] = None) -> Tuple[int, int, int, int]:
+        if isinstance(spec, dict):
+            verb_raw = spec.get("verb")
+            node_raw = spec.get("node")
+            color_raw = spec.get("color")
+            qty_raw = spec.get("qty")
+        elif isinstance(spec, (list, tuple)):
+            if len(spec) != 4:
+                raise ValueError("StaticPolicy sequence tuples must have four elements")
+            verb_raw, node_raw, color_raw, qty_raw = spec
+        else:
+            raise TypeError("StaticPolicy sequence entries must be dicts or 4-tuples")
+
+        verb = self._parse_verb(verb_raw)
+        node = self._parse_node(world, node_raw, allow_missing=allow_missing_node, default_node=default_node)
+        color = self._parse_color(color_raw, world)
+        qty = self._parse_qty(qty_raw, verb, world)
+        return (verb, node, color, qty)
+
+    def _parse_verb(self, raw: Any) -> int:
+        if isinstance(raw, str):
+            key = raw.strip().upper()
+            if key not in Verb.__members__:
+                raise ValueError(f"Unknown verb '{raw}' for StaticPolicy")
+            return int(Verb[key])
+        try:
+            return int(Verb(int(raw)))
+        except (ValueError, TypeError):  # pragma: no cover - defensive
+            raise ValueError(f"Invalid verb value '{raw}' for StaticPolicy")
+
+    def _parse_node(self,
+                    world: "EurobotWorld",
+                    raw: Any,
+                    *,
+                    allow_missing: bool = False,
+                    default_node: Optional[int] = None) -> int:
+        if raw is None:
+            if allow_missing and default_node is not None:
+                return int(default_node)
+            raise ValueError("StaticPolicy actions require a target node")
+
+        if isinstance(raw, str):
+            key = raw.strip().lower()
+            if key not in self._node_lookup:
+                raise ValueError(f"Unknown node name '{raw}' for StaticPolicy")
+            return int(self._node_lookup[key])
+
+        node = int(raw)
+        if node < 0 or node >= int(world.N):
+            raise ValueError(f"Node index {node} out of range for StaticPolicy")
+        return node
+
+    def _parse_color(self, raw: Any, world: "EurobotWorld") -> int:  # type: ignore
+        if raw is None:
+            return 0
+        if isinstance(raw, str):
+            key = raw.strip().lower()
+            if key in ("blue", "b", "0"):
+                return 0
+            if key in ("yellow", "y", "1"):
+                return 1
+            raise ValueError(f"Unknown color '{raw}' for StaticPolicy")
+        try:
+            color = int(raw)
+        except (ValueError, TypeError):
+            raise ValueError(f"Invalid color value '{raw}' for StaticPolicy")
+        if color < 0 or color >= world.blue.inv.shape[0]:  # num colors shared by both robots
+            raise ValueError("Color indices must be non-negative for StaticPolicy")
+        return color
+
+    def _parse_qty(self, raw: Any, verb: int, world: "EurobotWorld") -> int:  # type: ignore
+        max_qty = int(world.yellow_prof.max_action_qty)
+        capacity = int(world.yellow_prof.capacity)
+        verb_enum = Verb(int(verb))
+
+        if verb_enum == Verb.MOVE:
+            return 0
+
+        if raw is None:
+            if verb_enum in (Verb.PICK, Verb.PLACE, Verb.STEAL):
+                raw = max_qty
+            elif verb_enum == Verb.WAIT:
+                raw = 1
+            else:
+                raw = 1
+
+        try:
+            qty = int(raw)
+        except (ValueError, TypeError):
+            raise ValueError(f"Invalid quantity '{raw}' for StaticPolicy")
+
+        if qty < 0:
+            raise ValueError("Quantities must be non-negative for StaticPolicy")
+
+        if verb_enum in (Verb.PICK, Verb.PLACE, Verb.STEAL):
+            qty = min(qty, max_qty, capacity)
+        elif verb_enum == Verb.FLIP:
+            qty = min(qty, max_qty)
+        elif verb_enum == Verb.WAIT:
+            qty = qty if qty > 0 else 1
+
+        return qty
+
+    def _fallback_action(self, world: "EurobotWorld", state: RobotState) -> Tuple[int, int, int, int]:  # type: ignore
+        if self._fallback_cfg is None:
+            return (int(Verb.WAIT), int(state.node), 0, 1)
+
+        return self._parse_action(
+            world,
+            self._fallback_cfg,
+            allow_missing_node=True,
+            default_node=int(state.node),
+        )
 
 # -------- Save / Load helpers --------
 def save_robot_config(path: str,

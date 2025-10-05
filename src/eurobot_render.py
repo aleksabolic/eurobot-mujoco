@@ -86,14 +86,6 @@ class EurobotCV2Renderer:
         x1,y1 = self._w2p(TABLE_X_MAX, TABLE_Y_MAX)
         cv2.rectangle(img, (x0,y0), (x1,y1), BLK, 1)
 
-        # nests
-        for node in self.world.nodes:
-            if node.kind == NodeType.NEST:
-                cx,cy = node.xy
-                p0 = self._w2p(cx - NEST_HALF_X, cy - NEST_HALF_Y)
-                p1 = self._w2p(cx + NEST_HALF_X, cy + NEST_HALF_Y)
-                cv2.rectangle(img, p0, p1, BLK, 1)
-
         # snapshot
         if self.world.history:
             s = self.world.history[idx]
@@ -101,11 +93,43 @@ class EurobotCV2Renderer:
             pantries, pickups = s["pantries"], s["pickups"]
             blue_inv, yellow_inv = s["blue_inv"], s["yellow_inv"]
             t_left = s["t_left"]
+            nest_blue = int(s.get("nest_blue", self.world.nest_blue_counted))
+            nest_yellow = int(s.get("nest_yellow", self.world.nest_yellow_counted))
         else:
             blue_node, yellow_node = self.world.blue.node, self.world.yellow.node
             pantries, pickups = self.world.pantries, self.world.pickups
             blue_inv, yellow_inv = self.world.blue.inv, self.world.yellow.inv
             t_left = self.world.t_left
+            nest_blue = int(self.world.nest_blue_counted)
+            nest_yellow = int(self.world.nest_yellow_counted)
+
+        # nests
+        label_pad = 4
+        for node in self.world.nodes:
+            if node.kind == NodeType.NEST:
+                cx, cy = node.xy
+                p0 = self._w2p(cx - NEST_HALF_X, cy - NEST_HALF_Y)
+                p1 = self._w2p(cx + NEST_HALF_X, cy + NEST_HALF_Y)
+                tl = (min(p0[0], p1[0]), min(p0[1], p1[1]))
+                br = (max(p0[0], p1[0]), max(p0[1], p1[1]))
+                cv2.rectangle(img, tl, br, BLK, 1)
+
+                if node.name == "NestBlue":
+                    fill = FACE_BLUE
+                    label = f"B{nest_blue}"
+                else:
+                    fill = FACE_YELLOW
+                    label = f"Y{nest_yellow}"
+
+                (tw, th), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+                box_tl = (tl[0] + label_pad, tl[1] + label_pad)
+                box_br = (box_tl[0] + tw + label_pad * 2, box_tl[1] + th + baseline + label_pad)
+                cv2.rectangle(img, box_tl, box_br, fill, thickness=-1)
+
+                text_x = box_tl[0] + label_pad
+                text_y = box_br[1] - label_pad - baseline
+                cv2.putText(img, label, (text_x, text_y),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.5, BLK, 1, cv2.LINE_AA)
 
         # pantries
         for k, idx_node in enumerate(self.world.PANTRIES):

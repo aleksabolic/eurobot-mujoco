@@ -1,6 +1,6 @@
 import numpy as np
 
-from policies import GreedyStashPolicy, ThiefPolicy, BalancedPolicy, load_robot_config
+from policies import GreedyStashPolicy, ThiefPolicy, BalancedPolicy, StaticPolicy, load_robot_config
 from robot import Verb
 from eurobot_world import Col
 
@@ -63,3 +63,34 @@ def test_balanced_policy_flip_and_place(world):
     action_place = policy.next_action("blue", world, world.blue, place_rng)
     assert action_place[0] == Verb.PLACE
     assert action_place[1] in world.PANTRIES
+
+
+def test_static_policy_runs_scripted_cycle(world):
+    params = {
+        "loop": True,
+        "sequence": [
+            {"verb": "MOVE", "node": "P1"},
+            {"verb": "PICK", "node": "P1", "color": "yellow", "qty": 1},
+            {"verb": "MOVE", "node": "PantryA"},
+            {"verb": "PLACE", "node": "PantryA", "color": "yellow", "qty": 1},
+        ],
+    }
+    policy = StaticPolicy(params)
+    world.yellow_policy = policy
+    world.reset(seed=321)
+
+    rng = np.random.default_rng(0)
+    actions = [policy.next_action("yellow", world, world.yellow, rng) for _ in range(4)]
+    verbs = [Verb(a[0]) for a in actions]
+    assert verbs == [Verb.MOVE, Verb.PICK, Verb.MOVE, Verb.PLACE]
+
+    # ensure loop restarts sequence deterministically
+    loop_action = policy.next_action("yellow", world, world.yellow, rng)
+    assert loop_action == actions[0]
+
+    # simulate time reset: lower t_left then raise to force pointer reset
+    world.t_left = 10.0
+    _ = policy.next_action("yellow", world, world.yellow, rng)
+    world.t_left = 100.0
+    reset_action = policy.next_action("yellow", world, world.yellow, rng)
+    assert reset_action == actions[0]

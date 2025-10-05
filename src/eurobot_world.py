@@ -487,7 +487,6 @@ class EurobotWorld:
 
         return float(blue_score), float(yellow_score)
 
-    #TODO move this somewhere else
     # ----- helpers -----
     def _snap(self, tag: str, **extra):
         # return # slows down learning
@@ -500,11 +499,14 @@ class EurobotWorld:
             yellow_inv=self.yellow.inv.copy(),
             pantries=self.pantries.copy(),
             pickups=self.pickups.copy(),
+            nest_blue=int(self.nest_blue_counted),
+            nest_yellow=int(self.nest_yellow_counted),
         )
         if extra:
             snap["extra"] = extra
         self.history.append(snap)
 
+    #TODO move all these helpers below somewhere else
     def _nearest(self, start: int, pool: List[int]) -> int:
         i = int(np.argmin(self.D[start, pool] + 1e-6))
         return int(pool[i])
