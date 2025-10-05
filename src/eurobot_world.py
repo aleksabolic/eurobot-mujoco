@@ -36,14 +36,14 @@ PANTRIES_POS = {
     "J": np.array([ 0.80, -0.9]),
 }
 PICKUPS_POS = {
-    "P1": np.array([-1.375,  0.20]), 
-    "P2": np.array([ 1.375,  0.20]),
+    "P1": np.array([-1.325,  0.20]), 
+    "P2": np.array([ 1.325,  0.20]),
     "P3": np.array([-0.35, -0.20]), 
     "P4": np.array([ 0.35, -0.20]),
-    "P5": np.array([-1.375, -0.60]), 
-    "P6": np.array([ 1.375, -0.60]),
-    "P7": np.array([-0.40, -0.875]), 
-    "P8": np.array([ 0.40, -0.875]),
+    "P5": np.array([-1.325, -0.60]), 
+    "P6": np.array([ 1.325, -0.60]),
+    "P7": np.array([-0.40, -0.825]), 
+    "P8": np.array([ 0.40, -0.825]),
 }
 NESTS = {"blue": np.array([ 1.20,  0.80]),
          "yellow": np.array([-1.20,  0.80])}
