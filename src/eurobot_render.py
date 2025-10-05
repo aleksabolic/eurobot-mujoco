@@ -50,7 +50,7 @@ class EurobotCV2Renderer:
         self.table_img = None
         self.bg_alpha = float(background_alpha)
         if background_path is None:
-            background_path = Path(__file__).resolve().parents[1] / "assets" / "table_bis.png"
+            background_path = Path(__file__).resolve().parents[1] / "assets" / "table.png"
         try:
             if background_path.exists():
                 img = cv2.imread(str(background_path), cv2.IMREAD_COLOR)
