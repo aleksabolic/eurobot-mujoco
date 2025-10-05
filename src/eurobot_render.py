@@ -285,3 +285,115 @@ class EurobotCV2Renderer:
                 pass
         # fallback: something sane
         return 1920, 1080
+
+# Helper for reviewing the gif
+def review(frames_rgb, title="Eurobot (cv2)", fps=5):
+    assert len(frames_rgb) > 0, "No frames to review"
+
+    import tkinter as _tk
+    def _screen_size():
+        try:
+            root = _tk.Tk()
+            root.withdraw()
+            w, h = root.winfo_screenwidth(), root.winfo_screenheight()
+            root.destroy()
+            if w > 0 and h > 0:
+                return int(w), int(h)
+        except Exception:
+            pass
+        return 1920, 1080
+
+    H, W = frames_rgb[0].shape[:2]
+    cv2.namedWindow(title, cv2.WINDOW_AUTOSIZE)
+    cv2.imshow(title, cv2.cvtColor(frames_rgb[0], cv2.COLOR_RGB2BGR))
+    cv2.waitKey(1)  # make sure window exists before moving
+
+    try:
+        x, y, w, h = cv2.getWindowImageRect(title)
+        sw, sh = _screen_size()
+        nx = max(0, (sw - w) // 2)
+        ny = max(0, (sh - h) // 2)
+        cv2.moveWindow(title, nx, ny)
+    except Exception:
+        sw, sh = _screen_size()
+        nx = max(0, (sw - W) // 2)
+        ny = max(0, (sh - H) // 2)
+        cv2.moveWindow(title, nx, ny)
+
+    n = len(frames_rgb)
+    idx = 0
+    playing = True
+    updating_from_code = False
+    delay = max(1, int(1000 / max(fps, 1.0)))
+
+    def show(i):
+        img = cv2.cvtColor(frames_rgb[i], cv2.COLOR_RGB2BGR)
+        cv2.imshow(title, img)
+
+    def on_trackbar(v):
+        nonlocal idx, playing
+        idx = int(v)
+        show(idx)
+        if not updating_from_code:
+            playing = False
+
+    cv2.createTrackbar("t", title, 0, n - 1, on_trackbar)
+
+    def get_key(delay_ms):
+        k = cv2.waitKeyEx(delay_ms) & 0xFFFFFFFF
+        if k == 0xFFFFFFFF: return ""
+        if k in (ord('q'), ord('Q')): return "quit"
+        if k == 27: return "esc"              # don't quit on 'esc' unless you want to
+        if k == 32: return "space"
+
+        # Linux/X11
+        if k == 65361: return "left"
+        if k == 65363: return "right"
+        if k == 65360: return "home"
+        if k == 65367: return "end"
+        # Windows waitKeyEx
+        if k == 2424832: return "left"
+        if k == 2555904: return "right"
+        if k == 2359296: return "home"
+        if k == 2293760: return "end"
+        return ""
+
+    while True:
+        if playing:
+            if idx < n - 1: idx += 1
+            else: playing = False
+            updating_from_code = True; cv2.setTrackbarPos("t", title, idx); updating_from_code = False
+            show(idx)
+
+        key = get_key(delay)
+        if not key: 
+            continue
+        if key in ("quit",): 
+            break
+        if key == "space":
+            playing = not playing
+        elif key == "left":
+            playing = False
+            idx = max(0, idx - 1)
+            updating_from_code = True; cv2.setTrackbarPos("t", title, idx); updating_from_code = False
+            show(idx)
+        elif key == "right":
+            playing = False
+            idx = min(n - 1, idx + 1)
+            updating_from_code = True; cv2.setTrackbarPos("t", title, idx); updating_from_code = False
+            show(idx)
+        elif key == "home":
+            playing = False
+            idx = 0
+            updating_from_code = True; cv2.setTrackbarPos("t", title, idx); updating_from_code = False
+            show(idx)
+        elif key == "end":
+            playing = False
+            idx = n - 1
+            updating_from_code = True; cv2.setTrackbarPos("t", title, idx); updating_from_code = False
+            show(idx)
+        elif key == "esc":
+            # optional: treat ESC as quit; if not, ignore it so arrows on some systems don't kill the app
+            pass
+
+    cv2.destroyWindow(title)
