@@ -212,9 +212,14 @@ class EurobotCV2Renderer:
         yx, yy = self.world.nodes[yellow_node].xy
         b = self._w2p(bx, by); y = self._w2p(yx, yy)
         R = self._l2p(0.12)
-        cv2.circle(img, b, R, (255,102,51), -1)
+        overlay = img.copy()
+        robot_alpha = 0.55
+        cv2.circle(overlay, b, R, (255,102,51), -1)
+        cv2.circle(overlay, y, R, (51,230,255), -1)
+        cv2.addWeighted(overlay, robot_alpha, img, 1 - robot_alpha, 0, img)
+        cv2.circle(img, b, R, (255,102,51), 2)
         cv2.circle(img, b, R, BLK, 2)
-        cv2.circle(img, y, R, (51,230,255), -1)
+        cv2.circle(img, y, R, (51,230,255), 2)
         cv2.circle(img, y, R, BLK, 2)
 
         # header
