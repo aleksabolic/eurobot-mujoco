@@ -40,12 +40,16 @@ class EurobotCV2Renderer:
         avail_h = self.H - self.pad_top - self.pad_bottom
         self.scale = min(avail_w / (TABLE_X_MAX - TABLE_X_MIN),
                          avail_h / (TABLE_Y_MAX - TABLE_Y_MIN))
-        self.ox = self.pad_left - TABLE_X_MIN * self.scale
-        self.oy = self.pad_bottom - TABLE_Y_MIN * self.scale
+        
         self.board_w = int(round((TABLE_X_MAX - TABLE_X_MIN) * self.scale))
-        self.board_h = int(round((TABLE_Y_MAX - TABLE_Y_MIN) * self.scale))
-        self.board_left = int(self.pad_left)
-        self.board_top = int(self.pad_top)
+        self.board_h = int(round((TABLE_Y_MAX - TABLE_Y_MIN) * self.scale)) 
+        dx = max(0, (avail_w - self.board_w) // 2)
+        dy = max(0, (avail_h - self.board_h) // 2)
+        self.board_left = int(self.pad_left + dx)
+        self.board_top  = int(self.pad_top  + dy)
+
+        self.ox = self.board_left - TABLE_X_MIN * self.scale
+        self.oy = (self.H - (self.board_top + self.board_h)) - TABLE_Y_MIN * self.scale
 
         self.table_img = None
         self.bg_alpha = float(background_alpha)
