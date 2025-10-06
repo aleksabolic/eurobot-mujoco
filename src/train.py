@@ -1,4 +1,7 @@
-import os, argparse
+import argparse
+import os
+import shutil
+from pathlib import Path
 import numpy as np
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize, DummyVecEnv
@@ -102,26 +105,34 @@ def eval_policy(model, episodes: int = 3, max_steps: int = 1000):
 if __name__ == "__main__":
     ap = argparse.ArgumentParser()
     ap.add_argument("--timesteps", type=int, default=100_000)
-    ap.add_argument("--load-ckpt", type=str, help="Checkpoint to load before training")
-    ap.add_argument("--save-ckpt", type=str, default="runs/ppo_blue_last.zip",
-                    help="Checkpoint path to save after training")
-    ap.add_argument("--load-vecnorm", type=str, help="VecNormalize file to load before training")
-    ap.add_argument("--save-vecnorm", type=str, default="runs/vecnorm.pkl",
-                    help="VecNormalize path to save after training")
+    ap.add_argument("--save-dir", type=str, default="runs/latest",
+                    help="Directory where checkpoints and configs will be stored (default: runs/latest)")
+    ap.add_argument("--load-dir", type=str,
+                    help="Directory to load existing checkpoint and VecNormalize stats from (defaults to --save-dir)")
     args = ap.parse_args()
 
-    os.makedirs("runs", exist_ok=True)
-    save_ckpt = args.save_ckpt
-    save_vecnorm = args.save_vecnorm
-    load_ckpt = args.load_ckpt or save_ckpt
-    load_vecnorm = args.load_vecnorm or save_vecnorm
+    save_dir = Path(args.save_dir).expanduser()
+    save_dir.mkdir(parents=True, exist_ok=True)
+    save_name = save_dir.name or "run"
 
-    ckpt_dir = os.path.dirname(save_ckpt)
-    if ckpt_dir:
-        os.makedirs(ckpt_dir, exist_ok=True)
-    vecnorm_dir = os.path.dirname(save_vecnorm)
-    if vecnorm_dir:
-        os.makedirs(vecnorm_dir, exist_ok=True)
+    load_dir = Path(args.load_dir).expanduser() if args.load_dir else save_dir
+    load_name = load_dir.name or save_name
+
+    save_ckpt_path = save_dir / f"ppo_blue_{save_name}.zip"
+    save_vecnorm_path = save_dir / f"vecnorm_{save_name}.pkl"
+    load_ckpt_path = load_dir / f"ppo_blue_{load_name}.zip"
+    load_vecnorm_path = load_dir / f"vecnorm_{load_name}.pkl"
+
+    save_ckpt_path.parent.mkdir(parents=True, exist_ok=True)
+    save_vecnorm_path.parent.mkdir(parents=True, exist_ok=True)
+
+    robot_cfg_src = Path(__file__).resolve().parent.parent / "robot_configs"
+    robot_cfg_dst = save_dir / "robot_configs"
+    if robot_cfg_src.exists():
+        robot_cfg_dst.mkdir(parents=True, exist_ok=True)
+        for cfg_file in robot_cfg_src.iterdir():
+            if cfg_file.is_file():
+                shutil.copy2(cfg_file, robot_cfg_dst / cfg_file.name)
 
     env_fns = [make_env_i(i) for i in range(N)]
 
@@ -163,15 +174,15 @@ if __name__ == "__main__":
     env = DummyVecEnv(env_fns)
 
     # Discrete counts → keep norm_obs=False; norm_reward=True is fine.
-    if load_vecnorm and os.path.exists(load_vecnorm):
-        env = VecNormalize.load(load_vecnorm, env)
+    if load_vecnorm_path.exists():
+        env = VecNormalize.load(str(load_vecnorm_path), env)
         env.training, env.norm_reward, env.norm_obs = True, True, False
     else:
         env = VecNormalize(env, norm_obs=False, norm_reward=True, clip_obs=10.0)
 
-    tb_log_name = os.path.splitext(os.path.basename(save_ckpt))[0] or "ppo"
-    if load_ckpt and os.path.exists(load_ckpt):
-        model = PPO.load(load_ckpt, env=env, device="auto")
+    tb_log_name = save_ckpt_path.stem or "ppo"
+    if load_ckpt_path.exists():
+        model = PPO.load(str(load_ckpt_path), env=env, device="auto")
     else:
         model = PPO(MaskedMultiCatPolicy, env,
               n_steps=2048, batch_size=36864,
@@ -186,9 +197,9 @@ if __name__ == "__main__":
         model.learn(total_timesteps=100_000, reset_num_timesteps=False,
                     progress_bar=True, tb_log_name=tb_log_name, callback=callback)
         total += 100_000
-        model.save(save_ckpt)
-        env.save(save_vecnorm)
-        print(f"Saved {save_ckpt} at {total:,} steps")
+        model.save(str(save_ckpt_path))
+        env.save(str(save_vecnorm_path))
+        print(f"Saved {save_ckpt_path} at {total:,} steps")
         # Quick raw evaluation (unnormalized rewards)
         try:
             eval_policy(model, episodes=3)
