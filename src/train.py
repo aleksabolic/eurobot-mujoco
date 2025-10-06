@@ -6,6 +6,7 @@ from stable_baselines3.common.monitor import Monitor
 from gymnasium.wrappers import TimeLimit
 import torch
 from eurobot_env import EurobotDiscreteEnv
+from eurobot_world import NEST_CAP_BLUE
 from robot import RobotProfile
 from masked_policy import MaskedMultiCatPolicy
 from stable_baselines3.common.callbacks import BaseCallback
@@ -156,6 +157,7 @@ if __name__ == "__main__":
         pickup_nodes=tmp_world.PICKUPS,
         nest_blue=nest_blue,
         nest_yellow=nest_yellow,
+        nest_cap_blue=NEST_CAP_BLUE,
     )
 
     env = DummyVecEnv(env_fns)

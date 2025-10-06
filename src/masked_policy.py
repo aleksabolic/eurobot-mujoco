@@ -27,6 +27,7 @@ class MaskContext:
     pan_room: th.Tensor
     pan_sum: th.Tensor
     pick_sum: th.Tensor
+    nest_blue: th.Tensor
 
 
 class MaskedMultiCatPolicy(ActorCriticPolicy):
@@ -61,6 +62,7 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
         self.allow_steal = bool(self.mask_cfg.get("allow_steal", True))
         self.can_flip = bool(self.mask_cfg.get("can_flip", True))
         self.nest_blue = int(self.mask_cfg.get("nest_blue", -1))
+        self.nest_cap = float(self.mask_cfg.get("nest_cap_blue", 0.0))
 
         # Lookup buffers
         pantry_idx = np.asarray(self.mask_cfg.get("pantry_idx", []), dtype=np.int64)
@@ -83,6 +85,8 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
         self.sl_pan = (i, i + self.n_colors * self.n_pantries)
         i += self.n_colors * self.n_pantries
         self.sl_pick = (i, i + self.n_colors * self.n_pickups)
+        i += self.n_colors * self.n_pickups
+        self.sl_nest = (i, i + 2)
 
     # ---- context helpers -------------------------------------------------
     def _build_context(self, obs: th.Tensor) -> MaskContext:
@@ -112,6 +116,12 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
             pick = th.zeros((B, 0, self.n_colors), device=device, dtype=obs.dtype)
             pick_sum = th.zeros((B, 0), device=device, dtype=obs.dtype)
 
+        if self.sl_nest[1] > self.sl_nest[0]:
+            nest_counts = obs[:, self.sl_nest[0]: self.sl_nest[1]]
+            nest_blue = nest_counts[:, 0]
+        else:
+            nest_blue = th.zeros(B, device=device, dtype=obs.dtype)
+
         return MaskContext(
             blue_node=blue_node,
             inv_b=inv_b,
@@ -122,7 +132,14 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
             pan_room=pan_room,
             pan_sum=pan_sum,
             pick_sum=pick_sum,
+            nest_blue=nest_blue,
         )
+
+    def _nest_capacity_left(self, ctx: MaskContext) -> th.Tensor:
+        if self.nest_blue < 0 or self.nest_cap <= 0:
+            return th.zeros_like(ctx.nest_blue)
+        cap = th.as_tensor(self.nest_cap, device=ctx.nest_blue.device, dtype=ctx.nest_blue.dtype)
+        return (cap - ctx.nest_blue).clamp_min(0)
 
     def _mask_verb(self, ctx: MaskContext) -> th.Tensor:
         B = ctx.blue_node.size(0)
@@ -139,8 +156,8 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
         if Verb.PLACE < self.n_verbs:
             has_inventory = ctx.inv_sum > 0
             pantry_room_any = (self.n_pantries > 0) and (ctx.pan_room > 0).any(dim=1)
-            nest_available = self.nest_blue >= 0
-            mask[:, Verb.PLACE] = has_inventory & (pantry_room_any | nest_available)
+            nest_room = self._nest_capacity_left(ctx) > 0
+            mask[:, Verb.PLACE] = has_inventory & (pantry_room_any | nest_room)
 
         if Verb.FLIP < self.n_verbs and self.can_flip:
             has_source = (ctx.inv_sum > 0) & ((ctx.inv_sum.unsqueeze(1) - ctx.inv_b) > 0).any(dim=1)
@@ -179,7 +196,8 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
                 room = (ctx.pan_room > 0) & (ctx.inv_sum.view(B, 1) > 0)
                 mask[:, self.pantry_nodes] |= room
             if self.nest_blue >= 0:
-                mask[:, self.nest_blue] |= ctx.inv_sum > 0
+                nest_room = self._nest_capacity_left(ctx) > 0
+                mask[:, self.nest_blue] |= (ctx.inv_sum > 0) & nest_room
 
         flip_mask = verb == Verb.FLIP
         if flip_mask.any():
@@ -228,7 +246,8 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
             valid_nest = place_mask & (node == self.nest_blue)
             if valid_nest.any():
                 inv = ctx.inv_b[valid_nest]
-                mask[valid_nest, COLOR_BLUE] = inv[:, COLOR_BLUE] > 0
+                nest_room = self._nest_capacity_left(ctx)[valid_nest].unsqueeze(1)
+                mask[valid_nest] |= (inv > 0) & (nest_room > 0)
 
         flip_mask = verb == Verb.FLIP
         if flip_mask.any():
@@ -290,8 +309,11 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
                 mask[valid_pantry, 0] = True
             valid_nest = place_mask & (node == self.nest_blue)
             if valid_nest.any():
-                inv = ctx.inv_b[valid_nest, COLOR_BLUE]
-                limit = th.floor(inv).long().clamp(min=0, max=self.max_qtyp1 - 1)
+                inv_rows = ctx.inv_b[valid_nest]
+                selected = color[valid_nest].unsqueeze(1)
+                inv = inv_rows.gather(1, selected).squeeze(1)
+                nest_cap_left = self._nest_capacity_left(ctx)[valid_nest]
+                limit = th.minimum(th.floor(inv).long(), th.floor(nest_cap_left).long()).clamp(min=0, max=self.max_qtyp1 - 1)
                 mask_vals = idx <= limit.unsqueeze(1)
                 mask[valid_nest] = mask_vals
                 mask[valid_nest, 0] = True

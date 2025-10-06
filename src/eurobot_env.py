@@ -38,6 +38,7 @@ class EurobotDiscreteEnv(gym.Env):
             + self.num_colors
             + self.num_colors * len(self.world.PANTRIES)
             + self.num_colors * len(self.world.PICKUPS)
+            + 2  # nest counts (blue, yellow)
         )
         self.observation_space = spaces.Box(low=0.0, high=1e6, shape=(obs_dim,), dtype=np.float32)
         self._obs_buf = np.zeros((obs_dim,), dtype=np.float32)
@@ -48,6 +49,7 @@ class EurobotDiscreteEnv(gym.Env):
         self._sl_inv_y = slice(i, i+self.num_colors); i += self.num_colors
         self._sl_pan   = slice(i, i + self.num_colors*len(self.world.PANTRIES)); i += self.num_colors*len(self.world.PANTRIES)
         self._sl_pick  = slice(i, i + self.num_colors*len(self.world.PICKUPS));  i += self.num_colors*len(self.world.PICKUPS)
+        self._sl_nest  = slice(i, i + 2); i += 2
 
     def reset(self, seed: Optional[int]=None, options=None):
         self.world.reset(seed=seed)
@@ -75,4 +77,5 @@ class EurobotDiscreteEnv(gym.Env):
         # pantries/pickups flattened
         o[self._sl_pan]  = w.pantries.reshape(-1)
         o[self._sl_pick] = w.pickups.reshape(-1)
+        o[self._sl_nest] = (float(w.nest_blue_counted), float(w.nest_yellow_counted))
         return o
