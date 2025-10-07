@@ -2,6 +2,7 @@ import argparse
 import os
 import shutil
 from pathlib import Path
+from typing import Optional
 import numpy as np
 from stable_baselines3 import PPO
 from stable_baselines3.common.vec_env import SubprocVecEnv, VecNormalize, DummyVecEnv
@@ -12,7 +13,7 @@ from eurobot_env import EurobotDiscreteEnv
 from eurobot_world import NEST_CAP_BLUE
 from robot import RobotProfile
 from masked_policy import MaskedMultiCatPolicy
-from stable_baselines3.common.callbacks import BaseCallback
+from stable_baselines3.common.callbacks import BaseCallback, CallbackList
 
 torch.set_num_threads(1)
 try: torch.set_num_interop_threads(1)
@@ -20,6 +21,12 @@ except: pass
 
 N = 18
 CPU_IDS = list(range(N))
+SEED = 68
+
+# Entropy schedule parameters
+INITIAL_ENT_COEF = 0.05
+FINAL_ENT_COEF = 0.01
+
 
 class FinalScoreCallback(BaseCallback):
     def __init__(self, verbose: int = 0):
@@ -59,18 +66,61 @@ class FinalScoreCallback(BaseCallback):
         self._blue_scores.clear()
         self._yellow_scores.clear()
 
+
+class CosineEntropyCallback(BaseCallback):
+    def __init__(self, initial_ent_coef: float, final_ent_coef: float, total_timesteps: int, verbose: int = 0):
+        super().__init__(verbose)
+        self.initial_ent_coef = float(initial_ent_coef)
+        self.final_ent_coef = float(final_ent_coef)
+        self.total_timesteps = max(1, int(total_timesteps))
+        self._base_timestep: Optional[int] = None
+
+    def _on_training_start(self) -> None:
+        self._apply(self.model.num_timesteps)
+
+    def _on_step(self) -> bool:
+        self._apply(self.model.num_timesteps)
+        return True
+
+    def preview_value(self, current_step: int) -> float:
+        return self._compute_value(current_step)
+
+    def _apply(self, current_step: int) -> None:
+        value = self._compute_value(current_step)
+        _set_model_entropy_coef(self.model, value)
+        self.logger.record("train/entropy_coef", float(value))
+
+    def _compute_value(self, current_step: int) -> float:
+        if self._base_timestep is None:
+            self._base_timestep = current_step
+        elapsed = max(current_step - self._base_timestep, 0)
+        progress = min(elapsed / self.total_timesteps, 1.0)
+        weight = 0.5 * (1 + np.cos(np.pi * progress))
+        return float(self.final_ent_coef + (self.initial_ent_coef - self.final_ent_coef) * weight)
+
+
+def _set_model_entropy_coef(model: PPO, value: float) -> None:
+    model.ent_coef = float(value)
+    policy = getattr(model, "policy", None)
+    if policy is not None and hasattr(policy, "entropy_coef"):
+        entropy_coef = getattr(policy, "entropy_coef")
+        if isinstance(entropy_coef, torch.Tensor):
+            entropy_coef.data.fill_(float(value))
+        else:
+            setattr(policy, "entropy_coef", float(value))
+
 def make_env_i(i):
     def _thunk():
         import os
         try: os.sched_setaffinity(0, {CPU_IDS[i]})
         except Exception: pass
-        env = EurobotDiscreteEnv()
+        env = EurobotDiscreteEnv(seed=SEED)
         return Monitor(TimeLimit(env, max_episode_steps=400))
     return _thunk
 
 def eval_policy(model, episodes: int = 3, max_steps: int = 1000):
     """Deterministic evaluation on raw (unnormalized) env to print true returns."""
-    env = EurobotDiscreteEnv()
+    env = EurobotDiscreteEnv(seed=SEED)
     rl_returns = []
     score_blue = []
     score_yellow = []
@@ -96,10 +146,7 @@ def eval_policy(model, episodes: int = 3, max_steps: int = 1000):
     print(
         "Eval (raw): "
         f"mean_rl_return={mean_rl:.2f} mean_blue_score={mean_blue_score:.2f} "
-        f"mean_yellow_score={mean_yellow_score:.2f} episodes={episodes}"
-        f" rl_returns={[round(x,2) for x in rl_returns]}"
-        f" blue_scores={[round(x,2) for x in score_blue]}"
-        f" yellow_scores={[round(x,2) for x in score_yellow]}"
+        f"mean_yellow_score={mean_yellow_score:.2f}"
     )
 
 if __name__ == "__main__":
@@ -137,7 +184,7 @@ if __name__ == "__main__":
     env_fns = [make_env_i(i) for i in range(N)]
 
     # fetch sizes from a single env
-    _tmp = EurobotDiscreteEnv()
+    _tmp = EurobotDiscreteEnv(seed=SEED)
     K = len(_tmp.world.PANTRIES)
     M = len(_tmp.world.PICKUPS)
     n_nodes = _tmp.n_nodes
@@ -180,22 +227,32 @@ if __name__ == "__main__":
     else:
         env = VecNormalize(env, norm_obs=False, norm_reward=True, clip_obs=10.0)
 
+    entropy_callback = CosineEntropyCallback(
+        initial_ent_coef=INITIAL_ENT_COEF,
+        final_ent_coef=FINAL_ENT_COEF,
+        total_timesteps=args.timesteps,
+    )
+
     tb_log_name = save_ckpt_path.stem or "ppo"
     if load_ckpt_path.exists():
         model = PPO.load(str(load_ckpt_path), env=env, device="auto")
     else:
         model = PPO(MaskedMultiCatPolicy, env,
               n_steps=2048, batch_size=36864,
-              ent_coef=0.01, learning_rate=3e-4,
+              ent_coef=INITIAL_ENT_COEF, learning_rate=3e-4,
               gamma=0.995, clip_range=0.2, n_epochs=2,
               tensorboard_log="runs/tb",
-              policy_kwargs={"mask_cfg": mask_cfg})
+              policy_kwargs={"mask_cfg": mask_cfg},
+              seed=SEED)
+
+    current_ent_coef = entropy_callback.preview_value(model.num_timesteps)
+    _set_model_entropy_coef(model, current_ent_coef)
 
     total = 0
     while total < args.timesteps:
-        callback = FinalScoreCallback()
+        callbacks = CallbackList([entropy_callback, FinalScoreCallback()])
         model.learn(total_timesteps=100_000, reset_num_timesteps=False,
-                    progress_bar=True, tb_log_name=tb_log_name, callback=callback)
+                    progress_bar=True, tb_log_name=tb_log_name, callback=callbacks)
         total += 100_000
         model.save(str(save_ckpt_path))
         env.save(str(save_vecnorm_path))
