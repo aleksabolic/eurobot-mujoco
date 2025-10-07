@@ -19,6 +19,7 @@ BLUE = (255,102,51)      # BGR
 YELL = (51,230,255)
 BLK  = (0,0,0)
 WHT  = (255,255,255)
+LBL  = (96, 96, 96)
 FACE_BLUE    = (255,210,191)
 FACE_YELLOW  = (179,250,255)
 FACE_TIED    = (242,242,217)
@@ -120,9 +121,16 @@ class EurobotCV2Renderer:
         x1,y1 = self._w2p(TABLE_X_MAX, TABLE_Y_MAX)
         cv2.rectangle(img, (x0,y0), (x1,y1), BLK, 1)
 
+        history = self.world.history
+        resolved_idx = None
         # snapshot
-        if self.world.history:
-            s = self.world.history[idx]
+        if history:
+            resolved_idx = idx
+            if resolved_idx < 0:
+                resolved_idx = len(history) + resolved_idx
+            if resolved_idx is None or not (0 <= resolved_idx < len(history)):
+                resolved_idx = len(history) - 1
+            s = history[resolved_idx]
             blue_node, yellow_node = s["blue_node"], s["yellow_node"]
             pantries, pickups = s["pantries"], s["pickups"]
             blue_inv, yellow_inv = s["blue_inv"], s["yellow_inv"]
@@ -181,16 +189,26 @@ class EurobotCV2Renderer:
             cx, cy = node.xy
             p0 = self._w2p(cx - PANTRY_HALF, cy - PANTRY_HALF)
             p1 = self._w2p(cx + PANTRY_HALF, cy + PANTRY_HALF)
+            tl_x, tl_y = min(p0[0], p1[0]), min(p0[1], p1[1])
+            br_x, br_y = max(p0[0], p1[0]), max(p0[1], p1[1])
             b, y = int(pantries[k, Col.BLUE]), int(pantries[k, Col.YELLOW])
             if b>y: c=FACE_BLUE
             elif y>b: c=FACE_YELLOW
             else: c=FACE_TIED
-            cv2.rectangle(img, p0, p1, c, thickness=-1)
-            cv2.rectangle(img, p0, p1, BLK, 1)
+            cv2.rectangle(img, (tl_x, tl_y), (br_x, br_y), c, thickness=-1)
+            cv2.rectangle(img, (tl_x, tl_y), (br_x, br_y), BLK, 1)
+
+            pantry_letter = node.name.replace("Pantry", "")
+            (ltw, lth), lbase = cv2.getTextSize(pantry_letter, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
+            letter_x = max(label_pad, min(tl_x + label_pad, self.W - ltw - label_pad))
+            letter_y = max(lth + label_pad, min(tl_y + lth + label_pad, self.H - label_pad))
+            cv2.putText(img, pantry_letter, (letter_x, letter_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.4, LBL, 1, cv2.LINE_AA)
+
             label = f"B{b}/Y{y}"
             (tw, th), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
-            text_x = p0[0] + ((p1[0] - p0[0] - tw) // 2)
-            text_y = p0[1] + ((p1[1] - p0[1] + th) // 2)
+            text_x = tl_x + ((br_x - tl_x - tw) // 2)
+            text_y = tl_y + ((br_y - tl_y + th) // 2)
             cv2.putText(img, label, (text_x, text_y),
                         cv2.FONT_HERSHEY_SIMPLEX, 0.4, BLK, 1, cv2.LINE_AA)
 
@@ -204,6 +222,19 @@ class EurobotCV2Renderer:
             c = FACE_AVAIL if (b+y)>0 else FACE_EMPTY
             cv2.circle(img, (px,py), r, c, -1)
             cv2.circle(img, (px,py), r, BLK, 1)
+
+            pickup_name = node.name
+            (ptw, pth), pbase = cv2.getTextSize(pickup_name, cv2.FONT_HERSHEY_SIMPLEX, 0.35, 1)
+            name_text_x = px - ptw // 2
+            name_text_y = py - r - label_pad
+            if name_text_y - pth - pbase < 0:
+                name_text_y = py + r + pth + label_pad
+                if name_text_y > self.H - label_pad:
+                    name_text_y = py + pth // 2
+            name_text_x = min(max(name_text_x, label_pad), self.W - ptw - label_pad)
+            cv2.putText(img, pickup_name, (name_text_x, name_text_y),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.35, LBL, 1, cv2.LINE_AA)
+
             label = f"B{b} Y{y}"
             (tw, th), baseline = cv2.getTextSize(label, cv2.FONT_HERSHEY_SIMPLEX, 0.4, 1)
             text_x = px - tw // 2
@@ -236,13 +267,31 @@ class EurobotCV2Renderer:
         cv2.putText(img, f"YELL inv: B{int(yellow_inv[Col.BLUE])} Y{int(yellow_inv[Col.YELLOW])}",
                     (header_x, header_y + 36), cv2.FONT_HERSHEY_SIMPLEX, 0.5, BLK, 1, cv2.LINE_AA)
 
-        score_x = self.pad_left + 320
-        cv2.putText(img, f"BLUE score: {blue_score:.1f}", (score_x, header_y),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, BLK, 1, cv2.LINE_AA)
-        cv2.putText(img, f"YELL score: {yellow_score:.1f}", (score_x, header_y + 18),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, BLK, 1, cv2.LINE_AA)
-        cv2.putText(img, f"BLUE RL return: {blue_return:.3f}", (score_x, header_y + 36),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, BLK, 1, cv2.LINE_AA)
+        score_x = self.pad_left + 220
+        score_texts = [
+            f"BLUE score: {blue_score:.1f}",
+            f"YELL score: {yellow_score:.1f}",
+            f"BLUE RL return: {blue_return:.3f}",
+        ]
+        for i, text in enumerate(score_texts):
+            cv2.putText(img, text, (score_x, header_y + 18 * i),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.5, BLK, 1, cv2.LINE_AA)
+        score_max_width = 0
+        for text in score_texts:
+            (tw, _), _ = cv2.getTextSize(text, cv2.FONT_HERSHEY_SIMPLEX, 0.5, 1)
+            score_max_width = max(score_max_width, tw)
+        event_x = score_x + score_max_width + 100
+        # recent events overlay
+        if history and resolved_idx is not None:
+            max_events = 3
+            start = max(0, resolved_idx - (max_events - 1))
+            recent = history[start:resolved_idx + 1]
+            event_y = header_y
+            for snap in reversed(recent):
+                label = self._format_event_label(snap)
+                cv2.putText(img, label, (event_x, event_y),
+                            cv2.FONT_HERSHEY_SIMPLEX, 0.43, BLK, 1, cv2.LINE_AA)
+                event_y += 16
 
         if show:
             # create the window once so we can move it
@@ -289,6 +338,50 @@ class EurobotCV2Renderer:
                 pass
         # fallback: something sane
         return 1920, 1080
+
+    def _format_event_label(self, snap: dict) -> str:
+        tag = str(snap.get("tag", "") or "")
+        label = tag.replace("_", " ").strip()
+        if "_" in tag:
+            actor, rest = tag.split("_", 1)
+            actor_txt = actor.upper()
+            rest_txt = rest.replace("_", " ")
+            label = f"{actor_txt}: {rest_txt}"
+        extra = snap.get("extra")
+        detail_txt = ""
+        if isinstance(extra, dict):
+            invalid = extra.get("invalid_detail")
+            if isinstance(invalid, dict):
+                reason = invalid.get("reason")
+                node_name = invalid.get("node_name")
+                if reason:
+                    reason_txt = reason.replace("_", " ")
+                    if node_name:
+                        detail_txt = f"{reason_txt} @ {node_name}"
+                    else:
+                        detail_txt = reason_txt
+        if not detail_txt and tag.startswith("blue_"):
+            try:
+                node_idx = int(snap.get("blue_node", -1))
+                node_name = self.world.nodes[node_idx].name if 0 <= node_idx < len(self.world.nodes) else ""
+                if node_name:
+                    detail_txt = f"@ {node_name}"
+            except Exception:
+                detail_txt = ""
+        elif not detail_txt and tag.startswith("yellow_"):
+            try:
+                node_idx = int(snap.get("yellow_node", -1))
+                node_name = self.world.nodes[node_idx].name if 0 <= node_idx < len(self.world.nodes) else ""
+                if node_name:
+                    detail_txt = f"@ {node_name}"
+            except Exception:
+                detail_txt = ""
+        label = label.strip()
+        if detail_txt:
+            return f"{label} ({detail_txt})"
+        if not label:
+            return "event"
+        return label
 
 # Helper for reviewing the gif
 def review(frames_rgb, title="Eurobot (cv2)", fps=5):
