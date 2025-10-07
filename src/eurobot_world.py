@@ -184,7 +184,7 @@ class EurobotWorld:
 
         r = 0.0
         dist   = float(self.D[rob.node, node]) if node != rob.node else 0.0
-        t_move = prof.travel_time(dist) if verb in (Verb.MOVE, Verb.PICK, Verb.PLACE) and dist > 0 else 0.0
+        t_move = prof.travel_time(dist) if verb in (Verb.MOVE, Verb.PICK, Verb.PLACE, Verb.STEAL) and dist > 0 else 0.0
         t_hand = prof.handle_time(verb, qty)
         t_total = t_move + t_hand
 

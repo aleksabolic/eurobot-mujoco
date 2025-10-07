@@ -4,7 +4,7 @@ import gymnasium as gym
 from gymnasium import spaces
 from typing import Optional, Tuple
 from eurobot_world import EurobotWorld, Col
-from robot import RobotProfile
+from robot import RobotProfile, Verb
 from policies import load_robot_config
 
 class EurobotDiscreteEnv(gym.Env):
@@ -28,7 +28,7 @@ class EurobotDiscreteEnv(gym.Env):
         self.max_qty = int(blue_prof.max_action_qty)  # assumed same for obs space shape
         self.num_colors = len(Col)
 
-        self.action_space = spaces.MultiDiscrete([5, self.n_nodes, self.num_colors, self.max_qty+1])
+        self.action_space = spaces.MultiDiscrete([len(Verb), self.n_nodes, self.num_colors, self.max_qty+1])
         # obs = [t_left(float scaled 0..100*10), blue_node, yellow_node,
         #        blue_inv(num_colors), yellow_inv(num_colors),
         #        pantries(#*num_colors), pickups(#*num_colors)]
