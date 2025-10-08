@@ -26,10 +26,9 @@ def test_load_robot_config(robot_profiles):
 def test_greedy_policy_moves_then_picks(world):
     policy = GreedyStashPolicy()
     action = policy.next_action("blue", world, world.blue, np.random.default_rng(0))
-    assert action[0] in (Verb.MOVE, Verb.WAIT, Verb.PICK)
-    # move toward a pickup when empty inventory
-    if action[0] == Verb.MOVE:
-        assert action[1] in world.PICKUPS
+    assert action[0] == Verb.PICK
+    assert action[1] in world.PICKUPS
+    assert action[3] > 0
 
     # simulate arriving at target pickup
     target = world.PICKUPS[0]
@@ -69,9 +68,9 @@ def test_static_policy_runs_scripted_cycle(world):
     params = {
         "loop": True,
         "sequence": [
-            {"verb": "MOVE", "node": "P1"},
             {"verb": "PICK", "node": "P1", "color": "yellow", "qty": 1},
-            {"verb": "MOVE", "node": "PantryA"},
+            {"verb": "PLACE", "node": "PantryA", "color": "yellow", "qty": 1},
+            {"verb": "PICK", "node": "P1", "color": "yellow", "qty": 1},
             {"verb": "PLACE", "node": "PantryA", "color": "yellow", "qty": 1},
         ],
     }
@@ -82,7 +81,7 @@ def test_static_policy_runs_scripted_cycle(world):
     rng = np.random.default_rng(0)
     actions = [policy.next_action("yellow", world, world.yellow, rng) for _ in range(4)]
     verbs = [Verb(a[0]) for a in actions]
-    assert verbs == [Verb.MOVE, Verb.PICK, Verb.MOVE, Verb.PLACE]
+    assert verbs == [Verb.PICK, Verb.PLACE, Verb.PICK, Verb.PLACE]
 
     # ensure loop restarts sequence deterministically
     loop_action = policy.next_action("yellow", world, world.yellow, rng)

@@ -6,7 +6,10 @@ from typing import Optional, Tuple, Dict, Any, List
 import numpy as np
 
 class Verb(IntEnum):
-    MOVE=0; PICK=1; PLACE=2; FLIP=3; WAIT=4; STEAL=5 
+    PICK = 0
+    PLACE = 1
+    FLIP = 2
+    STEAL = 3
 
 @dataclass
 class RobotProfile:
@@ -51,11 +54,13 @@ class RobotProfile:
         return self.t_startstop + t_motion
 
     def handle_time(self, verb: Verb, qty: int) -> float:
+        qty = int(qty)
+        if verb in (Verb.PICK, Verb.PLACE, Verb.STEAL, Verb.FLIP) and qty <= 0:
+            raise AssertionError(f"{verb.name} requires a positive quantity")
         if verb == Verb.PICK:  return self.t_pick_base  + qty*self.t_pick_per
         if verb == Verb.PLACE: return self.t_place_base + qty*self.t_place_per
         if verb == Verb.FLIP:  return self.t_flip_base  + qty*self.t_flip_per
         if verb == Verb.STEAL: return self.t_pick_base  + qty*self.t_pick_per
-        if verb == Verb.WAIT:  return 0.5 + 0.25*qty
         return 0.0
 
     def to_dict(self) -> Dict[str, Any]:

@@ -183,21 +183,16 @@ class EurobotWorld:
             qty = prof.max_action_qty
 
         r = 0.0
+        if verb in (Verb.PICK, Verb.PLACE, Verb.STEAL, Verb.FLIP) and qty <= 0:
+            raise AssertionError(f"{verb.name} requires a positive quantity")
+
         dist   = float(self.D[rob.node, node]) if node != rob.node else 0.0
-        t_move = prof.travel_time(dist) if verb in (Verb.MOVE, Verb.PICK, Verb.PLACE, Verb.STEAL) and dist > 0 else 0.0
+        t_move = prof.travel_time(dist) if verb in (Verb.PICK, Verb.PLACE, Verb.STEAL) and dist > 0 else 0.0
         t_hand = prof.handle_time(verb, qty)
         t_total = t_move + t_hand
 
         # if "instant" work, just apply immediately without scheduling
         if t_total <= 0.0:
-            # MOVE to same node → treat as invalid idle action
-            if verb == Verb.MOVE:
-                if actor_tag == "blue":
-                    penalty = self.rewards.invalid_action_penalty
-                    r -= penalty
-                    self._add_blue_return(-penalty)
-                self._snap(f"{actor_tag}_move_idle")
-                return r
             did_move = (t_move > 0.0)
             return self._finish_event(actor_tag, int(verb), node, color, qty, did_move, r)
 
@@ -209,8 +204,12 @@ class EurobotWorld:
 
     # ----- simple scripted yellow -----
     def _schedule_yellow_scripted(self):
+        if self.yellow_policy is None:
+            return
         from policies import Policy  # type: ignore
         a = self.yellow_policy.next_action("yellow", self, self.yellow, self.rng)
+        if a is None:
+            return
         self._schedule(self.yellow, self.yellow_prof, a, "yellow")
 
     # ----- advancing -----
@@ -463,26 +462,6 @@ class EurobotWorld:
                     self._add_blue_return(-penalty)
                     self.last_invalid_detail = detail
                 self._snap(f"{actor_tag}_steal_empty", invalid_detail=detail)
-            return r
-
-        if verb == Verb.WAIT:
-            if actor_tag == "blue":
-                penalty = self.rewards.invalid_action_penalty
-                r -= penalty
-                self._add_blue_return(-penalty)
-            detail = dict(
-                reason="wait",
-                actor=actor_tag,
-                verb="WAIT",
-                qty=int(qty),
-                inventory=self._inventory_snapshot(rob.inv),
-            )
-            detail.update(self._describe_node(node))
-            if actor_tag == "blue":
-                self.last_invalid_detail = detail
-                self._snap(f"{actor_tag}_wait", invalid_detail=detail)
-            else:
-                self._snap(f"{actor_tag}_wait")
             return r
 
         return r

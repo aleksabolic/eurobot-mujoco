@@ -47,6 +47,14 @@ def test_handle_time_mappings(profile):
     assert profile.handle_time(Verb.STEAL, 4) == pytest.approx(
         profile.t_pick_base + 4 * profile.t_pick_per
     )
-    assert profile.handle_time(Verb.WAIT, 2) == pytest.approx(0.5 + 0.25 * 2)
-    # MOVE defaults to zero handling time
-    assert profile.handle_time(Verb.MOVE, 5) == 0.0
+
+
+def test_handle_time_zero_quantity(profile):
+    with pytest.raises(AssertionError):
+        profile.handle_time(Verb.PICK, 0)
+    with pytest.raises(AssertionError):
+        profile.handle_time(Verb.PLACE, 0)
+    with pytest.raises(AssertionError):
+        profile.handle_time(Verb.STEAL, 0)
+    with pytest.raises(AssertionError):
+        profile.handle_time(Verb.FLIP, 0)

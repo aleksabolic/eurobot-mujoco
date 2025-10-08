@@ -27,19 +27,23 @@ def _drain_env(env, max_steps: int = 10):
 def test_mask_shapes(env, mask_cfg):
     policy = make_policy(env, mask_cfg)
     obs, _ = env.reset(seed=0)
+    pickup = env.world.PICKUPS[0]
+    env.step(np.array([Verb.PICK, pickup, Col.BLUE, 1]))
+    _drain_env(env)
+    obs = env._obs()
     obs_t = th.as_tensor(obs, dtype=th.float32).unsqueeze(0)
     ctx = policy._build_context(obs_t)
 
     verb_mask = policy._mask_verb(ctx)
     assert verb_mask.shape == (1, env.action_space.nvec[0])
 
-    node_mask = policy._mask_node(ctx, th.tensor([Verb.MOVE], dtype=th.long))
+    node_mask = policy._mask_node(ctx, th.tensor([Verb.PICK], dtype=th.long))
     assert node_mask.shape == (1, env.action_space.nvec[1])
 
-    color_mask = policy._mask_color(ctx, th.tensor([Verb.WAIT], dtype=th.long), ctx.blue_node.clone())
+    color_mask = policy._mask_color(ctx, th.tensor([Verb.PICK], dtype=th.long), ctx.blue_node.clone())
     assert color_mask.shape == (1, env.action_space.nvec[2])
 
-    qty_mask = policy._mask_qty(ctx, th.tensor([Verb.WAIT], dtype=th.long), ctx.blue_node.clone(), th.zeros(1, dtype=th.long))
+    qty_mask = policy._mask_qty(ctx, th.tensor([Verb.PICK], dtype=th.long), ctx.blue_node.clone(), th.zeros(1, dtype=th.long))
     assert qty_mask.shape == (1, env.action_space.nvec[3])
 
 
@@ -49,7 +53,7 @@ def test_pick_and_place_masks(env, mask_cfg):
     pickup = env.world.PICKUPS[0]
     pantry = env.world.PANTRIES[0]
 
-    obs, _, _, _, _ = env.step(np.array([Verb.MOVE, pickup, Col.BLUE, 0]))
+    obs, _, _, _, _ = env.step(np.array([Verb.PICK, pickup, Col.BLUE, 1]))
     _drain_env(env)
     obs = env._obs()
     obs_t = th.as_tensor(obs, dtype=th.float32).unsqueeze(0)
@@ -64,8 +68,6 @@ def test_pick_and_place_masks(env, mask_cfg):
     obs = env._obs()
     assert env.world.blue.inv[Col.BLUE] >= 1
 
-    obs, _, _, _, _ = env.step(np.array([Verb.MOVE, pantry, Col.BLUE, 0]))
-    _drain_env(env)
     obs = env._obs()
     obs_t = th.as_tensor(obs, dtype=th.float32).unsqueeze(0)
     ctx = policy._build_context(obs_t)

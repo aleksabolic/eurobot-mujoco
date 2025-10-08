@@ -133,8 +133,6 @@ def parse_action(
     node = current_node
     color = int(Col.BLUE)
     qty_defaults = {
-        Verb.MOVE: 0,
-        Verb.WAIT: 1,
         Verb.FLIP: 1,
         Verb.PICK: 1,
         Verb.PLACE: 1,
@@ -143,7 +141,7 @@ def parse_action(
     qty = qty_defaults.get(Verb(verb), 0)
 
     idx = 1
-    if Verb(verb) in (Verb.MOVE, Verb.PICK, Verb.PLACE, Verb.STEAL):
+    if Verb(verb) in (Verb.PICK, Verb.PLACE, Verb.STEAL):
         if idx >= len(tokens):
             node = current_node
         else:
@@ -180,10 +178,8 @@ def prompt_action(world: EurobotWorld, actor_tag: str, node_lookup: Dict[str, in
         raw = input(prompt)
         lowered = raw.strip().lower()
         if lowered in {"help", "h", "?"}:
-            print(
-                "Enter actions like 'pick P1 blue 2' or 'move pantryA'. "
-                "Use '-' to keep defaults (current node/color/qty)."
-            )
+            print("Enter actions like 'pick P1 blue 2' or 'place pantryA blue 2'. "
+                  "Use '-' to keep defaults (current node/color/qty).")
             if print_nodes_hint:
                 print("Type 'nodes' to list all node names.")
                 print_nodes_hint = False
@@ -240,11 +236,34 @@ def execute_user_action(
     run_step(action_arr, auto=False)
 
     while not done and env.world.blue.event is not None and env.world.t_left > 0.0:
-        wait_action = np.array(
-            [int(Verb.WAIT), env.world.blue.node, int(Col.BLUE), 0],
-            dtype=np.int64,
-        )
-        run_step(wait_action, auto=True)
+        dt, r_gain = env.world._advance_until_next()
+        if dt <= 0.0:
+            break
+        time_penalty = env.world.rewards.time_penalty * dt
+        auto_reward = r_gain
+        if abs(time_penalty) > 1e-9:
+            auto_reward -= time_penalty
+            env.world._add_blue_return(-time_penalty)
+
+        total_steps += 1
+        steps_taken += 1
+        cumulative_reward += auto_reward
+
+        print(f"\n--- Auto-advance step {total_steps} ---")
+        print(f"Reward: {auto_reward: .3f}")
+        render_and_print(env.world, renderer, show_window)
+
+        if env.world.t_left <= 1e-9:
+            done = True
+            bonus = env.world._terminal_bonus()
+            if abs(bonus) > 1e-9:
+                cumulative_reward += bonus
+                env.world._add_blue_return(bonus)
+            env.world._snap("end")
+            info = {
+                "blue_final_score": float(env.world.final_scores()[0]),
+                "yellow_final_score": float(env.world.final_scores()[1]),
+            }
 
     print(
         f"Action resolved in {steps_taken} internal step(s); "

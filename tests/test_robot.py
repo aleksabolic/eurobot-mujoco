@@ -1,4 +1,5 @@
 import numpy as np
+import pytest
 
 from robot import RobotProfile, Verb
 
@@ -11,7 +12,8 @@ def test_travel_time_and_handle_time():
 
     assert profile.handle_time(Verb.PICK, 2) == profile.t_pick_base + 2 * profile.t_pick_per
     assert profile.handle_time(Verb.PLACE, 3) == profile.t_place_base + 3 * profile.t_place_per
-    assert profile.handle_time(Verb.WAIT, 4) == 0.5 + 0.25 * 4
+    with pytest.raises(AssertionError):
+        profile.handle_time(Verb.PICK, 0)
 
 
 def test_profile_serialization():

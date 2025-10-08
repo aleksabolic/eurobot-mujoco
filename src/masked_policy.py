@@ -146,9 +146,6 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
         device = ctx.blue_node.device
         mask = th.zeros((B, self.n_verbs), dtype=th.bool, device=device)
 
-        mask[:, Verb.MOVE] = True
-        mask[:, Verb.WAIT] = True
-
         if Verb.PICK < self.n_verbs and self.n_pickups > 0:
             has_pick = ((ctx.pick_sum > 0) & (ctx.cap_left.view(B, 1) > 0)).any(dim=1)
             mask[:, Verb.PICK] = has_pick
@@ -169,8 +166,8 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
             mask[:, Verb.STEAL] = has_steal
 
         dead = (~mask).all(dim=1)
-        if dead.any():
-            mask[dead, Verb.WAIT] = True
+        if bool(dead.any()):
+            raise RuntimeError("MaskedMultiCatPolicy: no valid verbs available for at least one batch element.")
 
         return mask
 
@@ -179,43 +176,42 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
         device = verb.device
         mask = th.zeros((B, self.n_nodes), dtype=th.bool, device=device)
         current_node = ctx.blue_node
-
-        move_mask = verb == Verb.MOVE
-        if move_mask.any():
-            mask[move_mask] = True
-            mask[move_mask, current_node[move_mask]] = False
-
         pick_mask = verb == Verb.PICK
-        if pick_mask.any() and self.n_pickups > 0:
-            valid = (ctx.pick_sum > 0) & (ctx.cap_left.view(B, 1) > 0)
-            mask[:, self.pickup_nodes] |= valid
+        if pick_mask.any():
+            submask = mask[pick_mask]
+            if submask.size(0) > 0 and self.n_pickups > 0:
+                valid = (ctx.pick_sum > 0) & (ctx.cap_left.view(B, 1) > 0)
+                submask[:, self.pickup_nodes] = valid[pick_mask]
+            mask[pick_mask] = submask
 
         place_mask = verb == Verb.PLACE
         if place_mask.any():
-            if self.n_pantries > 0:
-                room = (ctx.pan_room > 0) & (ctx.inv_sum.view(B, 1) > 0)
-                mask[:, self.pantry_nodes] |= room
-            if self.nest_blue >= 0:
-                nest_room = self._nest_capacity_left(ctx) > 0
-                mask[:, self.nest_blue] |= (ctx.inv_sum > 0) & nest_room
+            submask = mask[place_mask]
+            if submask.size(0) > 0:
+                if self.n_pantries > 0:
+                    room = (ctx.pan_room > 0) & (ctx.inv_sum.view(B, 1) > 0)
+                    submask[:, self.pantry_nodes] |= room[place_mask]
+                if self.nest_blue >= 0:
+                    nest_room = self._nest_capacity_left(ctx) > 0
+                    submask[:, self.nest_blue] |= ((ctx.inv_sum > 0) & nest_room)[place_mask]
+            mask[place_mask] = submask
 
         flip_mask = verb == Verb.FLIP
         if flip_mask.any():
             mask[flip_mask, current_node[flip_mask]] = True
 
         steal_mask = verb == Verb.STEAL
-        if steal_mask.any() and self.n_pantries > 0:
-            opp_stock = ctx.pan[:, :, COLOR_YELLOW] if ctx.pan.numel() > 0 else th.zeros((B, 0), device=device)
-            steal_room = (opp_stock > 0) & (ctx.cap_left.view(B, 1) > 0)
-            mask[:, self.pantry_nodes] |= steal_room
-
-        wait_mask = verb == Verb.WAIT
-        if wait_mask.any():
-            mask[wait_mask, current_node[wait_mask]] = True
+        if steal_mask.any():
+            submask = mask[steal_mask]
+            if submask.size(0) > 0 and self.n_pantries > 0:
+                opp_stock = ctx.pan[:, :, COLOR_YELLOW] if ctx.pan.numel() > 0 else th.zeros((B, 0), device=device)
+                steal_room = (opp_stock > 0) & (ctx.cap_left.view(B, 1) > 0)
+                submask[:, self.pantry_nodes] |= steal_room[steal_mask]
+            mask[steal_mask] = submask
 
         empty = (~mask).all(dim=1)
-        if empty.any():
-            mask[empty, current_node[empty]] = True
+        if bool(empty.any()):
+            raise RuntimeError("MaskedMultiCatPolicy: verb allowed but no valid target nodes.")
 
         return mask
 
@@ -262,13 +258,9 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
                 stocks = ctx.pan[valid_rows, :, :].gather(1, local.unsqueeze(1).unsqueeze(2).expand(-1, 1, self.n_colors)).squeeze(1)
                 mask[valid_rows] = (stocks > 0) & (ctx.cap_left[valid_rows].unsqueeze(1) > 0)
 
-        move_wait_mask = (verb == Verb.MOVE) | (verb == Verb.WAIT)
-        if move_wait_mask.any():
-            mask[move_wait_mask, 0] = True
-
         empty = (~mask).all(dim=1)
-        if empty.any():
-            mask[empty, 0] = True
+        if bool(empty.any()):
+            raise RuntimeError("MaskedMultiCatPolicy: verb/node combination has no valid colors.")
 
         return mask
 
@@ -276,7 +268,6 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
         B = verb.size(0)
         device = verb.device
         mask = th.zeros((B, self.max_qtyp1), dtype=th.bool, device=device)
-        mask[:, 0] = True
         idx = th.arange(self.max_qtyp1, device=device).view(1, -1)
 
         pickup_local = self.pickup_idx[node] if self.pickup_idx.numel() else th.full_like(node, -1)
@@ -292,9 +283,8 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
                 max_stock = th.floor(stock_color).long()
                 cap = th.floor(ctx.cap_left[valid_rows]).long()
                 limit = th.minimum(max_stock, cap).clamp(min=0, max=self.max_qtyp1 - 1)
-                mask_vals = idx <= limit.unsqueeze(1)
+                mask_vals = (idx >= 1) & (idx <= limit.unsqueeze(1))
                 mask[valid_rows] = mask_vals
-                mask[valid_rows, 0] = True
 
         place_mask = verb == Verb.PLACE
         if place_mask.any():
@@ -304,9 +294,8 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
                 room = ctx.pan_room[valid_pantry, :].gather(1, local.unsqueeze(1)).squeeze(1)
                 inv = ctx.inv_b[valid_pantry, color[valid_pantry]]
                 limit = th.minimum(th.floor(room).long(), th.floor(inv).long()).clamp(min=0, max=self.max_qtyp1 - 1)
-                mask_vals = idx <= limit.unsqueeze(1)
+                mask_vals = (idx >= 1) & (idx <= limit.unsqueeze(1))
                 mask[valid_pantry] = mask_vals
-                mask[valid_pantry, 0] = True
             valid_nest = place_mask & (node == self.nest_blue)
             if valid_nest.any():
                 inv_rows = ctx.inv_b[valid_nest]
@@ -314,18 +303,16 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
                 inv = inv_rows.gather(1, selected).squeeze(1)
                 nest_cap_left = self._nest_capacity_left(ctx)[valid_nest]
                 limit = th.minimum(th.floor(inv).long(), th.floor(nest_cap_left).long()).clamp(min=0, max=self.max_qtyp1 - 1)
-                mask_vals = idx <= limit.unsqueeze(1)
+                mask_vals = (idx >= 1) & (idx <= limit.unsqueeze(1))
                 mask[valid_nest] = mask_vals
-                mask[valid_nest, 0] = True
 
         flip_mask = verb == Verb.FLIP
         if flip_mask.any():
             other_color = 1 - color[flip_mask]
             inv_other = ctx.inv_b[flip_mask, other_color]
             limit = th.floor(inv_other).long().clamp(min=0, max=self.max_qtyp1 - 1)
-            mask_vals = idx <= limit.unsqueeze(1)
+            mask_vals = (idx >= 1) & (idx <= limit.unsqueeze(1))
             mask[flip_mask] = mask_vals
-            mask[flip_mask, 0] = True
 
         steal_mask = verb == Verb.STEAL
         if steal_mask.any() and self.n_pantries > 0:
@@ -337,18 +324,12 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
                 max_stock = th.floor(stock_color).long()
                 cap = th.floor(ctx.cap_left[valid_rows]).long()
                 limit = th.minimum(max_stock, cap).clamp(min=0, max=self.max_qtyp1 - 1)
-                mask_vals = idx <= limit.unsqueeze(1)
+                mask_vals = (idx >= 1) & (idx <= limit.unsqueeze(1))
                 mask[valid_rows] = mask_vals
-                mask[valid_rows, 0] = True
-
-        move_wait_mask = (verb == Verb.MOVE) | (verb == Verb.WAIT)
-        if move_wait_mask.any():
-            mask[move_wait_mask] = False
-            mask[move_wait_mask, 0] = True
 
         empty = (~mask).all(dim=1)
-        if empty.any():
-            mask[empty, 0] = True
+        if bool(empty.any()):
+            raise RuntimeError("MaskedMultiCatPolicy: no valid quantities for selected verb/node/color.")
 
         return mask
 
@@ -404,7 +385,7 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
         node = ctx.blue_node.clone()
         logp_node = th.zeros(B, device=device)
         ent_node = th.zeros(B, device=device)
-        node_required = (verb == Verb.MOVE) | (verb == Verb.PICK) | (verb == Verb.PLACE) | (verb == Verb.STEAL)
+        node_required = (verb == Verb.PICK) | (verb == Verb.PLACE) | (verb == Verb.STEAL)
         if node_required.any():
             node_mask = self._mask_node(ctx, verb)
             sel_node, lp_node, en_node = self._sample_head(node_logits[node_required], node_mask[node_required], deterministic)
@@ -459,7 +440,7 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
 
         logp_node = th.zeros(B, device=device)
         ent_node = th.zeros(B, device=device)
-        node_required = (verb == Verb.MOVE) | (verb == Verb.PICK) | (verb == Verb.PLACE) | (verb == Verb.STEAL)
+        node_required = (verb == Verb.PICK) | (verb == Verb.PLACE) | (verb == Verb.STEAL)
         if node_required.any():
             node_mask = self._mask_node(ctx, verb)
             masked = self._apply_mask(node_logits[node_required], node_mask[node_required])

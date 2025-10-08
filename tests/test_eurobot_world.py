@@ -15,14 +15,8 @@ from robot import Verb
 REWARDS = DEFAULT_REWARD_CONFIG
 
 
-class WaitPolicy:
-    def next_action(self, actor_tag, world, state, rng):
-        # minimal delay so the event loop advances deterministically
-        return (int(Verb.WAIT), int(state.node), 0, 1)
-
-
 def _set_wait_policy(world: EurobotWorld):
-    world.yellow_policy = WaitPolicy()
+    world.yellow_policy = None
     world.yellow.event = None
 
 
@@ -62,20 +56,20 @@ def test_reset_initial_state(world):
     assert np.all(world.pickups[:, Col.YELLOW] == 2)
 
 
-def test_move_and_idle_penalty(world):
+def test_reposition_and_idle(world):
     _set_wait_policy(world)
     world.reset(seed=0)
     target = world.PICKUPS[0]
-    r_move, done = world.step_blue((int(Verb.MOVE), target, 0, 0))
+    r_move, done = world.step_blue((int(Verb.PICK), target, 0, 1))
     _drain_events(world)
     assert not done
     assert int(world.blue.node) == target
     # time penalty is always negative
     assert r_move < 0
 
-    # idle move -> immediate penalty
-    idle_reward, done = world.step_blue((int(Verb.MOVE), target, 0, 0))
-    assert idle_reward <= -REWARDS.invalid_action_penalty
+    # idle pick with zero qty should be neutral
+    with pytest.raises(AssertionError):
+        world.step_blue((int(Verb.PICK), target, 0, 0))
 
 
 def test_pick_success_and_empty_penalty(world):
@@ -83,14 +77,14 @@ def test_pick_success_and_empty_penalty(world):
     world.reset(seed=1)
     pickup = world.PICKUPS[0]
     # move first
-    world.step_blue((int(Verb.MOVE), pickup, int(Col.BLUE), 0))
+    world.step_blue((int(Verb.PICK), pickup, int(Col.BLUE), 1))
     _drain_events(world)
     pre_stock = world.pickup_avail(pickup, Col.BLUE)
     reward, done = world.step_blue((int(Verb.PICK), pickup, int(Col.BLUE), 1))
     _drain_events(world)
     assert not done
     assert reward >= -1.0  # time penalty only
-    assert world.blue.inv[Col.BLUE] == 1
+    assert world.blue.inv[Col.BLUE] == 2
     assert world.pickup_avail(pickup, Col.BLUE) == pre_stock - 1
 
     # picking a color with no stock should incur penalty
@@ -111,15 +105,11 @@ def test_place_to_pantry_and_nest(world):
     pantry = world.PANTRIES[0]
     nest = world.NEST_BLUE
 
-    world.step_blue((int(Verb.MOVE), pickup, int(Col.BLUE), 0))
-    _drain_events(world)
     world.step_blue((int(Verb.PICK), pickup, int(Col.BLUE), 2))
     _drain_events(world)
     assert world.blue.inv[Col.BLUE] == 2
 
     # place at pantry
-    world.step_blue((int(Verb.MOVE), pantry, int(Col.BLUE), 0))
-    _drain_events(world)
     reward_pan, _ = world.step_blue((int(Verb.PLACE), pantry, int(Col.BLUE), 1))
     _drain_events(world)
     assert reward_pan >= REWARDS.pantry_bonus - 1.0  # reward minus time penalty
@@ -127,8 +117,6 @@ def test_place_to_pantry_and_nest(world):
     assert world.blue.inv[Col.BLUE] == 1
 
     # place remaining at nest
-    world.step_blue((int(Verb.MOVE), nest, int(Col.BLUE), 0))
-    _drain_events(world)
     reward_nest, _ = world.step_blue((int(Verb.PLACE), nest, int(Col.BLUE), 1))
     _drain_events(world)
     assert reward_nest >= REWARDS.nest_bonus - 1.0
@@ -144,8 +132,6 @@ def test_flip_changes_inventory(world):
     _set_wait_policy(world)
     world.reset(seed=3)
     pickup = world.PICKUPS[0]
-    world.step_blue((int(Verb.MOVE), pickup, int(Col.YELLOW), 0))
-    _drain_events(world)
     world.step_blue((int(Verb.PICK), pickup, int(Col.YELLOW), 2))
     _drain_events(world)
     assert world.blue.inv[Col.YELLOW] == 2
@@ -163,8 +149,6 @@ def test_steal(world):
     idx = world.pantry_idx[pantry]
     world.pantries[idx, Col.YELLOW] = 3
 
-    world.step_blue((int(Verb.MOVE), pantry, int(Col.YELLOW), 0))
-    _drain_events(world)
     reward, _ = world.step_blue((int(Verb.STEAL), pantry, int(Col.YELLOW), 2))
     _drain_events(world)
     assert reward >= -1.0
@@ -185,11 +169,16 @@ def test_steal(world):
     assert extra.endswith("steal_empty")
 
 
-def test_wait_penalty(world):
+def test_zero_quantity_actions_raise(world):
     _set_wait_policy(world)
     world.reset(seed=5)
-    reward, _ = world.step_blue((int(Verb.WAIT), world.blue.node, 0, 1))
-    assert reward <= -REWARDS.invalid_action_penalty
+    with pytest.raises(AssertionError):
+        world.step_blue((int(Verb.PICK), world.blue.node, 0, 0))
+    with pytest.raises(AssertionError):
+        world.step_blue((int(Verb.PLACE), world.blue.node, 0, 0))
+    pantry = world.PANTRIES[0]
+    with pytest.raises(AssertionError):
+        world.step_blue((int(Verb.STEAL), pantry, int(Col.BLUE), 0))
 
 
 def test_terminal_bonus(world):

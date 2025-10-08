@@ -66,11 +66,11 @@ def test_ppo_pick_flip_place_sequence(mask_cfg):
     vec_env = DummyVecEnv([_make_env()])
     env = vec_env.envs[0]
 
-    class _IdlePolicy:
+    class _PassivePolicy:
         def next_action(self, actor_tag, world, state, rng):
-            return (int(Verb.WAIT), int(state.node), int(Col.YELLOW), 1)
+            return None
 
-    env.world.yellow_policy = _IdlePolicy()
+    env.world.yellow_policy = _PassivePolicy()
 
     model = PPO(
         MaskedMultiCatPolicy,
@@ -91,10 +91,8 @@ def test_ppo_pick_flip_place_sequence(mask_cfg):
     pantry_local = int(env.world.pantry_idx[pantry_node])
 
     action_plan = [
-        np.array([int(Verb.MOVE), pickup_node, 0, 0]),
         np.array([int(Verb.PICK), pickup_node, int(Col.YELLOW), 1]),
         np.array([int(Verb.FLIP), pickup_node, int(Col.BLUE), 1]),
-        np.array([int(Verb.MOVE), pantry_node, 0, 0]),
         np.array([int(Verb.PLACE), pantry_node, int(Col.BLUE), 1]),
     ]
 
