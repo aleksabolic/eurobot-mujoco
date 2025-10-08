@@ -10,7 +10,7 @@ from policies import load_robot_config
 class EurobotDiscreteEnv(gym.Env):
     """
     Single-agent (BLUE) Gym env wrapping EurobotWorld.
-    Action = MultiDiscrete [verb(5), node(N), color(2), qty(0..max_qty)].
+    Action = MultiDiscrete [verb(len(Verb)), node(N), color(2), qty(0..max_qty)].
     One env.step = one BLUE decision; world advances to next event completion.
     """
     metadata = {"render_modes": [], "name": "EurobotDiscrete-v1"}

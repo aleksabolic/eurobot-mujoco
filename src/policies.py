@@ -45,8 +45,9 @@ class GreedyStashPolicy(Policy):
         # If carrying → place to best pantry with room
         if inv.sum() > 0:
             node = world.best_pantry_for(actor_tag, prefer_spread=False)
-            qty  = min(prof.max_action_qty, int(inv[np.argmax(inv)]))
-            return (int(Verb.PLACE), node, int(np.argmax(inv)), qty)
+            color_idx = int(np.argmax(inv))
+            qty  = min(prof.max_action_qty, int(inv[color_idx]))
+            return (int(Verb.PLACE), node, color_idx, qty)
 
         # Else pick from nearest stocked pickup (color pref by actor)
         target_color = world.pref_pick_color(actor_tag)
@@ -55,19 +56,15 @@ class GreedyStashPolicy(Policy):
             other = 1 - target_color
             node = world.nearest_pickup_with_stock(state.node, other)
             if node is None:
-                # wander to pantry
-                p = world.best_pantry_for(actor_tag, prefer_spread=True)
-                if p != state.node:
-                    return (int(Verb.MOVE), p, int(target_color), 0)
-                return (int(Verb.WAIT), state.node, int(target_color), 1)
+                raise RuntimeError("No stocked pickups available for GreedyStashPolicy")
             target_color = other
-        # move/pick
-        if node == state.node:
-            avail = world.pickup_avail(node, target_color)
-            qty = max(1, min(avail, prof.max_action_qty, cap_left))
-            return (int(Verb.PICK), node, int(target_color), qty)
-        else:
-            return (int(Verb.MOVE), node, int(target_color), 0)
+        if cap_left <= 0:
+            raise RuntimeError("No capacity left for pick action")
+        avail = world.pickup_avail(node, target_color)
+        if avail <= 0:
+            raise RuntimeError("Selected pickup has no stock available")
+        qty = min(avail, prof.max_action_qty, cap_left)
+        return (int(Verb.PICK), node, int(target_color), qty)
 
 class ThiefPolicy(Policy):
     name = "thief"
@@ -86,7 +83,12 @@ class ThiefPolicy(Policy):
                         qty = min(prof.max_action_qty, cap_left, world.pantry_avail(target, color))
                         return (int(Verb.STEAL), target, int(color), qty)
                 else:
-                    return (int(Verb.MOVE), target, 0, 0)
+                    color = world.prefer_steal_color(actor_tag, target)
+                    avail = world.pantry_avail(target, color)
+                    if avail <= 0:
+                        raise RuntimeError("Selected pantry has no stock to steal")
+                    qty = min(prof.max_action_qty, cap_left, avail)
+                    return (int(Verb.STEAL), target, int(color), qty)
 
         # fallback
         return GreedyStashPolicy(self.params).next_action(actor_tag, world, state, rng)
@@ -112,12 +114,12 @@ class BalancedPolicy(Policy):
         target_color = world.pref_pick_color(actor_tag)
         node = world.nearest_pickup_with_stock(state.node, target_color)
         if node is None:
-            return (int(Verb.WAIT), state.node, 0, 1)
-        if node == state.node:
-            avail = world.pickup_avail(node, target_color)
-            qty = max(1, min(avail, prof.max_action_qty, prof.capacity - inv_sum))
-            return (int(Verb.PICK), node, int(target_color), qty)
-        return (int(Verb.MOVE), node, int(target_color), 0)
+            raise RuntimeError("No stocked pickups available for BalancedPolicy")
+        avail = world.pickup_avail(node, target_color)
+        if avail <= 0:
+            raise RuntimeError("BalancedPolicy selected pickup with no stock")
+        qty = min(avail, prof.max_action_qty, prof.capacity - inv_sum)
+        return (int(Verb.PICK), node, int(target_color), qty)
 
 
 class StaticPolicy(Policy):
@@ -125,13 +127,9 @@ class StaticPolicy(Policy):
 
     # deterministic loop that alternates between two pickups/pantries
     DEFAULT_SEQUENCE: List[Dict[str, Any]] = [
-        {"verb": "MOVE",  "node": "P1"},
         {"verb": "PICK",  "node": "P1",      "color": "yellow", "qty": 2},
-        {"verb": "MOVE",  "node": "PantryA"},
         {"verb": "PLACE", "node": "PantryA",  "color": "yellow", "qty": 2},
-        {"verb": "MOVE",  "node": "P3"},
         {"verb": "PICK",  "node": "P3",      "color": "yellow", "qty": 2},
-        {"verb": "MOVE",  "node": "PantryB"},
         {"verb": "PLACE", "node": "PantryB",  "color": "yellow", "qty": 2},
     ]
 
@@ -270,14 +268,9 @@ class StaticPolicy(Policy):
         capacity = int(world.yellow_prof.capacity)
         verb_enum = Verb(int(verb))
 
-        if verb_enum == Verb.MOVE:
-            return 0
-
         if raw is None:
             if verb_enum in (Verb.PICK, Verb.PLACE, Verb.STEAL):
                 raw = max_qty
-            elif verb_enum == Verb.WAIT:
-                raw = 1
             else:
                 raw = 1
 
@@ -293,14 +286,14 @@ class StaticPolicy(Policy):
             qty = min(qty, max_qty, capacity)
         elif verb_enum == Verb.FLIP:
             qty = min(qty, max_qty)
-        elif verb_enum == Verb.WAIT:
-            qty = qty if qty > 0 else 1
 
+        if verb_enum in (Verb.PICK, Verb.PLACE, Verb.STEAL, Verb.FLIP) and qty <= 0:
+            raise ValueError(f"{verb_enum.name} requires a positive quantity in StaticPolicy")
         return qty
 
     def _fallback_action(self, world: "EurobotWorld", state: RobotState) -> Tuple[int, int, int, int]:  # type: ignore
         if self._fallback_cfg is None:
-            return (int(Verb.WAIT), int(state.node), 0, 1)
+            raise RuntimeError("StaticPolicy fallback action requested but none configured.")
 
         return self._parse_action(
             world,
