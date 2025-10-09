@@ -29,13 +29,10 @@ def test_reset_observation_matches_world(env):
     obs, _ = env.reset(seed=999)
     w = env.world
     assert obs.dtype == np.float32
-    assert obs[0] == pytest.approx(w.t_left * 10.0)
-    assert obs[1] == pytest.approx(float(w.blue.node))
-    assert obs[2] == pytest.approx(float(w.yellow.node))
+    assert obs[0] == pytest.approx(float(w.blue.node))
+    assert obs[1] == pytest.approx(float(w.yellow.node))
     blue_inv = obs[env._sl_inv_b]
-    yellow_inv = obs[env._sl_inv_y]
     assert np.allclose(blue_inv, w.blue.inv)
-    assert np.allclose(yellow_inv, w.yellow.inv)
 
 
 def test_step_reposition_then_pick(env):
