@@ -56,3 +56,4 @@ cymj.c
 /build
 /runs
 .pytest_cache/
+tb_logs.zip

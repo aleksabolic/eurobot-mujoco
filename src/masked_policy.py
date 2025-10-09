@@ -76,11 +76,9 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
 
         # Observation slices
         i = 0
-        self.sl_t_by = (i, i + 3)
-        i += 3
+        self.sl_nodes = (i, i + 2)
+        i += 2
         self.sl_inv_b = (i, i + self.n_colors)
-        i += self.n_colors
-        self.sl_inv_y = (i, i + self.n_colors)
         i += self.n_colors
         self.sl_pan = (i, i + self.n_colors * self.n_pantries)
         i += self.n_colors * self.n_pantries
@@ -93,7 +91,7 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
         B = obs.shape[0]
         device = obs.device
 
-        blue_node = obs[:, self.sl_t_by[0] + 1].long()
+        blue_node = obs[:, self.sl_nodes[0]].long()
         inv_b = obs[:, self.sl_inv_b[0]: self.sl_inv_b[1]]
         inv_sum = inv_b.sum(dim=1)
         cap_left = (th.tensor(self.capacity, device=device) - inv_sum).clamp_min(0)

@@ -29,12 +29,11 @@ class EurobotDiscreteEnv(gym.Env):
         self.num_colors = len(Col)
 
         self.action_space = spaces.MultiDiscrete([len(Verb), self.n_nodes, self.num_colors, self.max_qty+1])
-        # obs = [t_left(float scaled 0..100*10), blue_node, yellow_node,
-        #        blue_inv(num_colors), yellow_inv(num_colors),
+        # obs = [blue_node, yellow_node,
+        #        blue_inv(num_colors),
         #        pantries(#*num_colors), pickups(#*num_colors)]
         obs_dim = (
-            3
-            + self.num_colors
+            2
             + self.num_colors
             + self.num_colors * len(self.world.PANTRIES)
             + self.num_colors * len(self.world.PICKUPS)
@@ -42,11 +41,10 @@ class EurobotDiscreteEnv(gym.Env):
         )
         self.observation_space = spaces.Box(low=0.0, high=1e6, shape=(obs_dim,), dtype=np.float32)
         self._obs_buf = np.zeros((obs_dim,), dtype=np.float32)
-        # slices: t_by(3), blue_inv(num_colors), yellow_inv(num_colors), pantries, pickups
+        # slices: nodes(2), blue_inv(num_colors), pantries, pickups
         i = 0
-        self._sl_t_by = slice(i, i+3); i += 3
+        self._sl_nodes = slice(i, i+2); i += 2
         self._sl_inv_b = slice(i, i+self.num_colors); i += self.num_colors
-        self._sl_inv_y = slice(i, i+self.num_colors); i += self.num_colors
         self._sl_pan   = slice(i, i + self.num_colors*len(self.world.PANTRIES)); i += self.num_colors*len(self.world.PANTRIES)
         self._sl_pick  = slice(i, i + self.num_colors*len(self.world.PICKUPS));  i += self.num_colors*len(self.world.PICKUPS)
         self._sl_nest  = slice(i, i + 2); i += 2
@@ -70,10 +68,9 @@ class EurobotDiscreteEnv(gym.Env):
         w = self.world
         o = self._obs_buf
         # pack scalars
-        o[self._sl_t_by] = (w.t_left * 10.0, float(w.blue.node), float(w.yellow.node))
+        o[self._sl_nodes] = (float(w.blue.node), float(w.yellow.node))
         # inventories
         o[self._sl_inv_b] = w.blue.inv
-        o[self._sl_inv_y] = w.yellow.inv
         # pantries/pickups flattened
         o[self._sl_pan]  = w.pantries.reshape(-1)
         o[self._sl_pick] = w.pickups.reshape(-1)
