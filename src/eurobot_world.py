@@ -137,19 +137,29 @@ class EurobotWorld:
     # ----- public step for BLUE -----
     def step_blue(self, action):
         r = 0.0
+
+        # If BLUE is idle, schedule requested action now.
         if self.blue.event is None:
             r += self._schedule(self.blue, self.blue_prof, action, actor_tag="blue")
+
+        # Ensure YELLOW has a job before advancing time.
         if self.yellow.event is None:
             self._schedule_yellow_scripted()
 
-        dt, r_gain = self._advance_until_next()  # dt > 0 when something happens
-        r += r_gain
+        # Advance until BLUE's current event completes (decision epoch).
+        while self.t_left > 1e-9 and self.blue.event is not None:
+            dt, r_gain = self._advance_until_next()
+            r += r_gain
 
-        if dt > 0.0:
-            time_penalty = self.rewards.time_penalty * dt
-            if abs(time_penalty) > 1e-9:
-                r -= time_penalty
-                self._add_blue_return(-time_penalty)
+            if dt > 0.0:
+                tp = self.rewards.time_penalty * dt
+                if abs(tp) > 1e-9:
+                    r -= tp
+                    self._add_blue_return(-tp)
+
+            # Keep scripted YELLOW active while BLUE is still busy.
+            if self.yellow.event is None and self.blue.event is not None:
+                self._schedule_yellow_scripted()
 
         done = (self.t_left <= 1e-9)
         if done:
@@ -158,6 +168,7 @@ class EurobotWorld:
                 self._add_blue_return(bonus)
             r += bonus
             self._snap("end")
+
         return float(r), bool(done)
 
 
