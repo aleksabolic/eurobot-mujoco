@@ -57,3 +57,4 @@ cymj.c
 /runs
 .pytest_cache/
 tb_logs.zip
+utils/*.gif
