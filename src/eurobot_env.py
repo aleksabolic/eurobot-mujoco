@@ -28,22 +28,26 @@ class EurobotDiscreteEnv(gym.Env):
         self.max_qty = int(blue_prof.max_action_qty)  # assumed same for obs space shape
         self.num_colors = len(Col)
 
+        # TODO: remove + 1 in self.max_qty+1 as zero actions are invalid
         self.action_space = spaces.MultiDiscrete([len(Verb), self.n_nodes, self.num_colors, self.max_qty+1])
-        # obs = [blue_node, yellow_node,
+        # obs = [blue_node_one_hot(n_nodes),
+        #        yellow_node_one_hot(n_nodes),
         #        blue_inv(num_colors),
         #        pantries(#*num_colors), pickups(#*num_colors)]
         obs_dim = (
-            2
+            2 * self.n_nodes
             + self.num_colors
             + self.num_colors * len(self.world.PANTRIES)
             + self.num_colors * len(self.world.PICKUPS)
             + 2  # nest counts (blue, yellow)
         )
+        #TODO: replace low, high to vectors, not scalars
         self.observation_space = spaces.Box(low=0.0, high=1e6, shape=(obs_dim,), dtype=np.float32)
         self._obs_buf = np.zeros((obs_dim,), dtype=np.float32)
-        # slices: nodes(2), blue_inv(num_colors), pantries, pickups
+        # slices: blue_node, yellow_node, blue_inv, pantries, pickups
         i = 0
-        self._sl_nodes = slice(i, i+2); i += 2
+        self._sl_node_blue = slice(i, i+self.n_nodes); i += self.n_nodes
+        self._sl_node_yellow = slice(i, i+self.n_nodes); i += self.n_nodes
         self._sl_inv_b = slice(i, i+self.num_colors); i += self.num_colors
         self._sl_pan   = slice(i, i + self.num_colors*len(self.world.PANTRIES)); i += self.num_colors*len(self.world.PANTRIES)
         self._sl_pick  = slice(i, i + self.num_colors*len(self.world.PICKUPS));  i += self.num_colors*len(self.world.PICKUPS)
@@ -53,6 +57,7 @@ class EurobotDiscreteEnv(gym.Env):
         self.world.reset(seed=seed)
         return self._obs(), {}
 
+    #TODO: remove final_score calculation on each step
     def step(self, action: np.ndarray):
         v, n, c, q = map(int, action)
         r, done = self.world.step_blue((v, n, c, q))
@@ -67,8 +72,10 @@ class EurobotDiscreteEnv(gym.Env):
     def _obs(self):
         w = self.world
         o = self._obs_buf
-        # pack scalars
-        o[self._sl_nodes] = (float(w.blue.node), float(w.yellow.node))
+        o.fill(0.0)
+        # pack node positions as one-hot
+        o[self._sl_node_blue.start + int(w.blue.node)] = 1.0
+        o[self._sl_node_yellow.start + int(w.yellow.node)] = 1.0
         # inventories
         o[self._sl_inv_b] = w.blue.inv
         # pantries/pickups flattened

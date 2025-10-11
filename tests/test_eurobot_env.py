@@ -29,8 +29,12 @@ def test_reset_observation_matches_world(env):
     obs, _ = env.reset(seed=999)
     w = env.world
     assert obs.dtype == np.float32
-    assert obs[0] == pytest.approx(float(w.blue.node))
-    assert obs[1] == pytest.approx(float(w.yellow.node))
+    blue_one_hot = obs[env._sl_node_blue]
+    yellow_one_hot = obs[env._sl_node_yellow]
+    assert blue_one_hot.sum() == pytest.approx(1.0)
+    assert yellow_one_hot.sum() == pytest.approx(1.0)
+    assert int(np.argmax(blue_one_hot)) == int(w.blue.node)
+    assert int(np.argmax(yellow_one_hot)) == int(w.yellow.node)
     blue_inv = obs[env._sl_inv_b]
     assert np.allclose(blue_inv, w.blue.inv)
 
