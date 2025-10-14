@@ -74,10 +74,12 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
         self.register_buffer("pantry_nodes", th.as_tensor(pantry_nodes, dtype=th.long))
         self.register_buffer("pickup_nodes", th.as_tensor(pickup_nodes, dtype=th.long))
 
-        # Observation slices
+        # Observation slices mirror EurobotDiscreteEnv._obs layout.
         i = 0
-        self.sl_nodes = (i, i + 2)
-        i += 2
+        self.sl_node_blue = (i, i + self.n_nodes)
+        i += self.n_nodes
+        self.sl_node_yellow = (i, i + self.n_nodes)
+        i += self.n_nodes
         self.sl_inv_b = (i, i + self.n_colors)
         i += self.n_colors
         self.sl_pan = (i, i + self.n_colors * self.n_pantries)
@@ -91,7 +93,8 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
         B = obs.shape[0]
         device = obs.device
 
-        blue_node = obs[:, self.sl_nodes[0]].long()
+        blue_slice = obs[:, self.sl_node_blue[0]: self.sl_node_blue[1]]
+        blue_node = th.argmax(blue_slice, dim=1).long()
         inv_b = obs[:, self.sl_inv_b[0]: self.sl_inv_b[1]]
         inv_sum = inv_b.sum(dim=1)
         cap_left = (th.tensor(self.capacity, device=device) - inv_sum).clamp_min(0)

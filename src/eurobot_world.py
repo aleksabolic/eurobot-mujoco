@@ -64,8 +64,48 @@ class Col(IntEnum):
     BLUE = 0
     YELLOW = 1
 
+NODES = build_nodes()
+PANTRIES = [i for i,n in enumerate(NODES) if n.kind==NodeType.PANTRY]
+PICKUPS  = [i for i,n in enumerate(NODES) if n.kind==NodeType.PICKUP]
+NEST_BLUE  = next(i for i,n in enumerate(NODES) if n.name=="NestBlue")
+NEST_YELL  = next(i for i,n in enumerate(NODES) if n.name=="NestYellow")
+XY = np.stack([n.xy for n in NODES], axis=0)
+D = np.linalg.norm(XY[:,None,:] - XY[None,:,:], axis=-1).astype(np.float32)
 
 NUM_COLORS = len(Col)
+
+class PantryMatrix(np.ndarray):
+    def __new__(cls, world: "EurobotWorld", shape, dtype=np.int16):
+        obj = np.zeros(shape, dtype=dtype).view(cls)
+        obj._world = world
+        return obj
+
+    def __array_finalize__(self, obj):
+        self._world = getattr(obj, "_world", None)
+
+    def __setitem__(self, key, value):
+        world = getattr(self, "_world", None)
+        if world is None:
+            return super().__setitem__(key, value)
+
+        normalized = key if isinstance(key, tuple) else (key,)
+        if len(normalized) == 1:
+            normalized = (normalized[0], slice(None))
+
+        if len(normalized) == 2:
+            row_key, col_key = normalized
+            if isinstance(row_key, (int, np.integer)) and isinstance(col_key, (int, np.integer)):
+                row = int(row_key)
+                old_b = int(super().__getitem__((row, Col.BLUE)))
+                old_y = int(super().__getitem__((row, Col.YELLOW)))
+                super().__setitem__(key, value)
+                new_b = int(super().__getitem__((row, Col.BLUE)))
+                new_y = int(super().__getitem__((row, Col.YELLOW)))
+                world._update_pantry_row_aggregates(row, old_b, old_y, new_b, new_y)
+                return
+
+        super().__setitem__(key, value)
+        world._rebuild_pantry_aggregates()
 
 # --------- World ----------
 class EurobotWorld:
@@ -80,18 +120,16 @@ class EurobotWorld:
                  seed: Optional[int]=None,
                  rewards: RewardConfig = DEFAULT_REWARD_CONFIG):
         self.rng = np.random.default_rng(seed)
-        self.nodes = build_nodes()
-        self.N = len(self.nodes)
+        self.nodes = NODES
+        self.N = len(NODES)
+        self.D = D
 
         self.rewards = rewards
 
-        XY = np.stack([n.xy for n in self.nodes], axis=0)
-        self.D = np.linalg.norm(XY[:,None,:] - XY[None,:,:], axis=-1).astype(np.float32)
-
-        self.PANTRIES = [i for i,n in enumerate(self.nodes) if n.kind==NodeType.PANTRY]
-        self.PICKUPS  = [i for i,n in enumerate(self.nodes) if n.kind==NodeType.PICKUP]
-        self.NEST_BLUE  = next(i for i,n in enumerate(self.nodes) if n.name=="NestBlue")
-        self.NEST_YELL  = next(i for i,n in enumerate(self.nodes) if n.name=="NestYellow")
+        self.PANTRIES = PANTRIES
+        self.NEST_BLUE = NEST_BLUE
+        self.NEST_YELL = NEST_YELL
+        self.PICKUPS  = PICKUPS
 
         self.blue_prof   = blue_profile
         self.yellow_prof = yellow_profile
@@ -119,8 +157,14 @@ class EurobotWorld:
         self.blue   = RobotState(node=self.NEST_BLUE, inv=np.zeros(NUM_COLORS, dtype=np.int16))
         self.yellow = RobotState(node=self.NEST_YELL, inv=np.zeros(NUM_COLORS, dtype=np.int16))
 
-        self.pantries = np.zeros((len(self.PANTRIES), NUM_COLORS), dtype=np.int16)
+        self._pantry_blue_total   = 0
+        self._pantry_yellow_total = 0
+        self._blue_majority_cnt   = 0
+        self._yellow_majority_cnt = 0
+        self.pantries = PantryMatrix(self, (len(self.PANTRIES), NUM_COLORS), dtype=np.int16)
         self.pickups  = np.zeros((len(self.PICKUPS),  NUM_COLORS), dtype=np.int16)
+        # zero-initialized already; counts remain 0
+        self._rebuild_pantry_aggregates()
         # initial pickup stock: 2 blue + 2 yellow each
         self.pickups[:, Col.BLUE]   = 2
         self.pickups[:, Col.YELLOW] = 2
@@ -485,31 +529,44 @@ class EurobotWorld:
             bonus += self.rewards.finish_in_nest_bonus
         return bonus
 
+    def _rebuild_pantry_aggregates(self) -> None:
+        if self.pantries.size == 0:
+            self._pantry_blue_total = 0
+            self._pantry_yellow_total = 0
+            self._blue_majority_cnt = 0
+            self._yellow_majority_cnt = 0
+            return
+
+        blue = self.pantries[:, Col.BLUE].astype(np.int64)
+        yellow = self.pantries[:, Col.YELLOW].astype(np.int64)
+        self._pantry_blue_total = int(blue.sum())
+        self._pantry_yellow_total = int(yellow.sum())
+        self._blue_majority_cnt = int(np.sum(blue > yellow))
+        self._yellow_majority_cnt = int(np.sum(yellow > blue))
+
+    def _update_pantry_row_aggregates(self, k: int, old_b: int, old_y: int, new_b: int, new_y: int) -> None:
+        # totals
+        self._pantry_blue_total   += (new_b - old_b)
+        self._pantry_yellow_total += (new_y - old_y)
+        # majority counters
+        if old_b > old_y: self._blue_majority_cnt -= 1
+        elif old_y > old_b: self._yellow_majority_cnt -= 1
+        if new_b > new_y: self._blue_majority_cnt += 1
+        elif new_y > new_b: self._yellow_majority_cnt += 1
+
     def final_scores(self) -> Tuple[float, float]:
-        blue_score = 0.0
-        yellow_score = 0.0
+        r = self.rewards
+        blue_score   = r.pantry_bonus * int(self._pantry_blue_total)   + r.nest_bonus * int(self.nest_blue_counted)
+        yellow_score = r.pantry_bonus * int(self._pantry_yellow_total) + r.nest_bonus * int(self.nest_yellow_counted)
 
-        blue_pantry = int(self.pantries[:, Col.BLUE].sum()) if self.pantries.size else 0
-        yellow_pantry = int(self.pantries[:, Col.YELLOW].sum()) if self.pantries.size else 0
-        blue_score += self.rewards.pantry_bonus * blue_pantry
-        yellow_score += self.rewards.pantry_bonus * yellow_pantry
+        if r.interest_bonus:
+            blue_score   += r.interest_bonus * int(self._blue_majority_cnt)
+            yellow_score += r.interest_bonus * int(self._yellow_majority_cnt)
 
-        blue_score += self.rewards.nest_bonus * int(self.nest_blue_counted)
-        yellow_score += self.rewards.nest_bonus * int(self.nest_yellow_counted)
-
-        for row in self.pantries:
-            b = int(row[Col.BLUE])
-            y = int(row[Col.YELLOW])
-            if b > y:
-                blue_score += self.rewards.interest_bonus
-            elif y > b:
-                yellow_score += self.rewards.interest_bonus
-
-        if int(self.blue.node) == self.NEST_BLUE:
-            blue_score += self.rewards.finish_in_nest_bonus
-        if int(self.yellow.node) == self.NEST_YELL:
-            yellow_score += self.rewards.finish_in_nest_bonus
-
+        if self.blue.node == self.NEST_BLUE:
+            blue_score += r.finish_in_nest_bonus
+        if self.yellow.node == self.NEST_YELL:
+            yellow_score += r.finish_in_nest_bonus
         return float(blue_score), float(yellow_score)
 
     # ----- helpers -----

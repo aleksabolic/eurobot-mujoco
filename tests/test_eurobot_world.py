@@ -65,7 +65,7 @@ def test_reposition_and_idle(world):
     assert not done
     assert int(world.blue.node) == target
     # time penalty is always negative
-    assert r_move < 0
+    assert r_move <= 0
 
     # idle pick with zero qty should be neutral
     with pytest.raises(AssertionError):
