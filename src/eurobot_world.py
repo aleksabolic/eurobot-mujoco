@@ -4,14 +4,13 @@ from enum import IntEnum
 from typing import List, Optional, Tuple, Callable, Dict, Any
 import numpy as np
 from robot import RobotProfile, RobotState, Verb
-from policies import GreedyStashPolicy
+from policies import GreedyStashPolicy, load_robot_config
 from rewards import RewardConfig, DEFAULT_REWARD_CONFIG
 
 # --------- Constraints ----------
-NEST_CAP_BLUE = 6         # max crates per nest
+NEST_CAP = 6              # max crates per nest
 PANTRY_CAP = 8            # max crates per pantry (sum over colors)
 TIME_LIMIT_S  = 100.0     # float seconds
-ALLOW_STEAL = True  
 
 # --------- Map ----------
 class NodeType(IntEnum):
@@ -74,132 +73,92 @@ D = np.linalg.norm(XY[:,None,:] - XY[None,:,:], axis=-1).astype(np.float32)
 
 NUM_COLORS = len(Col)
 
-class PantryMatrix(np.ndarray):
-    def __new__(cls, world: "EurobotWorld", shape, dtype=np.int16):
-        obj = np.zeros(shape, dtype=dtype).view(cls)
-        obj._world = world
-        return obj
-
-    def __array_finalize__(self, obj):
-        self._world = getattr(obj, "_world", None)
-
-    def __setitem__(self, key, value):
-        world = getattr(self, "_world", None)
-        if world is None:
-            return super().__setitem__(key, value)
-
-        normalized = key if isinstance(key, tuple) else (key,)
-        if len(normalized) == 1:
-            normalized = (normalized[0], slice(None))
-
-        if len(normalized) == 2:
-            row_key, col_key = normalized
-            if isinstance(row_key, (int, np.integer)) and isinstance(col_key, (int, np.integer)):
-                row = int(row_key)
-                old_b = int(super().__getitem__((row, Col.BLUE)))
-                old_y = int(super().__getitem__((row, Col.YELLOW)))
-                super().__setitem__(key, value)
-                new_b = int(super().__getitem__((row, Col.BLUE)))
-                new_y = int(super().__getitem__((row, Col.YELLOW)))
-                world._update_pantry_row_aggregates(row, old_b, old_y, new_b, new_y)
-                return
-
-        super().__setitem__(key, value)
-        world._rebuild_pantry_aggregates()
-
 # --------- World ----------
 class EurobotWorld:
     """
     Discrete, event-driven eurobot world.
-    - Two robots with independent RobotProfile (BLUE learns, YELLOW scripted by default)
-    - Quantity+color pick/place, optional flip, per-robot timings.
     """
     def __init__(self,
-                 blue_profile: RobotProfile,
-                 yellow_profile: RobotProfile,
+                 blue_config_dir: str,
+                 yellow_config_dir: str,
                  seed: Optional[int]=None,
-                 rewards: RewardConfig = DEFAULT_REWARD_CONFIG):
+                 rewards: RewardConfig = DEFAULT_REWARD_CONFIG,
+                 allow_steal = True):
+        
         self.rng = np.random.default_rng(seed)
         self.nodes = NODES
         self.N = len(NODES)
         self.D = D
 
+        # TODO: Move rewards to .json or .yaml
         self.rewards = rewards
 
-        self.PANTRIES = PANTRIES
-        self.NEST_BLUE = NEST_BLUE
-        self.NEST_YELL = NEST_YELL
-        self.PICKUPS  = PICKUPS
+        # TODO: Add default values
+        blue_prof, blue_pol = load_robot_config(blue_config_dir) 
+        yellow_prof, yellow_pol = load_robot_config(yellow_config_dir)
 
-        self.blue_prof   = blue_profile
-        self.yellow_prof = yellow_profile
+        self.blue = RobotState(
+            tag="blue",
+            profile=blue_prof,
+            node=NEST_BLUE, 
+            inv=np.zeros(NUM_COLORS, dtype=np.int8),
+        )
+        self.yellow = RobotState(
+            tag="yellow",
+            profile=yellow_prof,
+            node=NEST_YELL, 
+            inv=np.zeros(NUM_COLORS, dtype=np.int8),
+        )
 
-        # TODO: move this in __init__ args
-        self.yellow_policy = GreedyStashPolicy()
+        # TODO: Move yellow policy to RobotState
+        self.yellow_policy = yellow_pol
 
-        self.allow_steal = ALLOW_STEAL
+        self.allow_steal = allow_steal
         self.pantry_cap  = int(PANTRY_CAP)
         self.reset(seed=seed)
 
         # maps from node_id -> local index or -1 (O(1) lookup)
         self.pantry_idx = -np.ones(self.N, dtype=np.int32)
         self.pickup_idx = -np.ones(self.N, dtype=np.int32)
-        for j, node_id in enumerate(self.PANTRIES):
+        for j, node_id in enumerate(PANTRIES):
             self.pantry_idx[node_id] = j
-        for j, node_id in enumerate(self.PICKUPS):
+        for j, node_id in enumerate(PICKUPS):
             self.pickup_idx[node_id] = j
+
+        self.PICKUPS = PICKUPS
+        self.PANTRIES = PANTRIES
+        self.NEST_BLUE = NEST_BLUE
+        self.NEST_YELL = NEST_YELL
 
     # ----- lifecycle -----
     def reset(self, seed: Optional[int]=None):
         if seed is not None: self.rng = np.random.default_rng(seed)
         self.t_left = float(TIME_LIMIT_S)
 
-        self.blue   = RobotState(node=self.NEST_BLUE, inv=np.zeros(NUM_COLORS, dtype=np.int16))
-        self.yellow = RobotState(node=self.NEST_YELL, inv=np.zeros(NUM_COLORS, dtype=np.int16))
+        self.pantries = np.zeros((len(PANTRIES), NUM_COLORS), dtype=np.int8)
+        self.pickups  = np.zeros((len(PICKUPS),  NUM_COLORS), dtype=np.int8)
+        self.nest_blue = 0
+        self.nest_yellow = 0
 
-        self._pantry_blue_total   = 0
-        self._pantry_yellow_total = 0
-        self._blue_majority_cnt   = 0
-        self._yellow_majority_cnt = 0
-        self.pantries = PantryMatrix(self, (len(self.PANTRIES), NUM_COLORS), dtype=np.int16)
-        self.pickups  = np.zeros((len(self.PICKUPS),  NUM_COLORS), dtype=np.int16)
-        # zero-initialized already; counts remain 0
-        self._rebuild_pantry_aggregates()
         # initial pickup stock: 2 blue + 2 yellow each
         self.pickups[:, Col.BLUE]   = 2
         self.pickups[:, Col.YELLOW] = 2
 
-        self.nest_blue_counted = 0 
-        self.nest_yellow_counted = 0
-        self.blue_return = 0.0
-
         # episode history for renderer (list of shallow snapshots)
         self.history: List[Dict] = []
-        self.last_invalid_detail: Optional[Dict[str, Any]] = None
         self._snap("reset")
 
     # ----- public step for BLUE -----
     def step_blue(self, action):
-        r = 0.0
-
-        # If BLUE is idle, schedule requested action now.
         if self.blue.event is None:
-            r += self._schedule(self.blue, self.blue_prof, action, actor_tag="blue")
+            self._schedule(self.blue, action)
 
-        # Ensure YELLOW has a job before advancing time.
         if self.yellow.event is None:
             self._schedule_yellow_scripted()
 
         # Advance until BLUE's current event completes (decision epoch).
         while self.t_left > 1e-9 and self.blue.event is not None:
-            dt, r_gain = self._advance_until_next()
-            r += r_gain
-
-            if dt > 0.0:
-                tp = self.rewards.time_penalty * dt
-                if abs(tp) > 1e-9:
-                    r -= tp
-                    self._add_blue_return(-tp)
+            self._advance_until_next()
 
             # Keep scripted YELLOW active while BLUE is still busy.
             if self.yellow.event is None and self.blue.event is not None:
@@ -207,74 +166,55 @@ class EurobotWorld:
 
         done = (self.t_left <= 1e-9)
         if done:
-            bonus = self._terminal_bonus()
-            if abs(bonus) > 1e-9:
-                self._add_blue_return(bonus)
-            r += bonus
             self._snap("end")
 
-        return float(r), bool(done)
-
+        return bool(done)
 
     # ----- scheduling -----
-    def _schedule(self, rob: RobotState, prof: RobotProfile,
-                  action: Tuple[int,int,int,int], actor_tag: str) -> float:
+    def _schedule(self, rob: RobotState, 
+                  action: Tuple[int,int,int,int]) -> float:
+        
         verb_i, node, color, qty = action
+
         verb = Verb(int(verb_i))
         node = int(node)
-        if node < 0:
-            node = 0
-        elif node > self.N - 1:
-            node = self.N - 1
         color = int(color)
-        if color < 0:
-            color = 0
-        elif color > NUM_COLORS - 1:
-            color = NUM_COLORS - 1
         qty = int(qty)
-        if qty < 0:
-            qty = 0
-        elif qty > prof.max_action_qty:
-            qty = prof.max_action_qty
 
-        r = 0.0
-        if verb in (Verb.PICK, Verb.PLACE, Verb.STEAL, Verb.FLIP) and qty <= 0:
-            raise AssertionError(f"{verb.name} requires a positive quantity")
-
+        if not self._check_valid_action(node, color, qty, rob):
+            raise AssertionError(f"{verb_i, node, color, qty} is not a valid action")
+            
         dist   = float(self.D[rob.node, node]) if node != rob.node else 0.0
-        t_move = prof.travel_time(dist) if verb in (Verb.PICK, Verb.PLACE, Verb.STEAL) and dist > 0 else 0.0
-        t_hand = prof.handle_time(verb, qty)
+        t_move = rob.profile.travel_time(dist) if verb in (Verb.PICK, Verb.PLACE, Verb.STEAL) and dist > 0 else 0.0
+        t_hand = rob.profile.handle_time(verb, qty)
         t_total = t_move + t_hand
 
-        # if "instant" work, just apply immediately without scheduling
+        # if "instant" work, just apply immediately without scheduling (TODO: remove?)
         if t_total <= 0.0:
             did_move = (t_move > 0.0)
-            return self._finish_event(actor_tag, int(verb), node, color, qty, did_move, r)
+            return self._finish_event(rob.tag, int(verb), node, color, qty, did_move)
 
         # else schedule as a compact tuple: [t_remaining, actor_id, verb, node, color, qty, did_move]
-        actor_id = 0 if actor_tag=="blue" else 1
+        actor_id = 0 if rob.tag=="blue" else 1
         did_move = (t_move > 0.0)
         rob.event = [t_total, actor_id, int(verb), node, color, qty, did_move]
-        return r
 
     # ----- simple scripted yellow -----
     def _schedule_yellow_scripted(self):
         if self.yellow_policy is None:
             return
-        from policies import Policy  # type: ignore
         a = self.yellow_policy.next_action("yellow", self, self.yellow, self.rng)
         if a is None:
             return
-        self._schedule(self.yellow, self.yellow_prof, a, "yellow")
+        self._schedule(self.yellow, a)
 
     # ----- advancing -----
     def _advance_until_next(self) -> Tuple[float, float]:
-        r_gain = 0.0
         tb = self.blue.event[0]   if self.blue.event   is not None else np.inf
         ty = self.yellow.event[0] if self.yellow.event is not None else np.inf
         dt = float(min(tb, ty))
         if not np.isfinite(dt) or dt <= 0.0:
-            return 0.0, 0.0
+            return 
 
         # Advance the match clock here ONLY
         self.t_left = max(0.0, self.t_left - dt)
@@ -286,23 +226,20 @@ class EurobotWorld:
             self.yellow.event[0] -= dt
 
         eps = 1e-9
-        if self.blue.event   is not None and self.blue.event[0]   <= eps:
+        if self.blue.event   is not None and self.blue.event[0] <= eps:
             # unpack and finish
             _, actor_id, verb, node, color, qty, did_move = self.blue.event
             self.blue.event = None
-            r_gain = self._finish_event("blue", verb, node, color, qty, bool(did_move), r_gain)
+            self._finish_event("blue", verb, node, color, qty, bool(did_move))
         if self.yellow.event is not None and self.yellow.event[0] <= eps:
             _, actor_id, verb, node, color, qty, did_move = self.yellow.event
             self.yellow.event = None
-            r_gain = self._finish_event("yellow", verb, node, color, qty, bool(did_move), r_gain)
-        return dt, r_gain
+            self._finish_event("yellow", verb, node, color, qty, bool(did_move))
 
     # ----- compact event executor -----
-    def _finish_event(self, actor_tag: str, verb_i: int, node: int, color: int, qty: int, did_move: bool, r_in: float) -> float:
-        r = r_in
-        blue_score_before = self._dense_blue_score()
+    def _finish_event(self, actor_tag: str, verb_i: int, node: int, color: int, qty: int, did_move: bool) -> float:
         rob   = self.blue   if actor_tag=="blue"   else self.yellow
-        prof  = self.blue_prof if actor_tag=="blue" else self.yellow_prof
+        prof  = self.blue.profile if actor_tag=="blue" else self.yellow.profile
 
         if did_move:
             rob.node = node
@@ -311,12 +248,7 @@ class EurobotWorld:
         if verb == Verb.PICK:
             idx = self.pickup_idx[node]
             if idx == -1:
-                if actor_tag == "blue":
-                    penalty = self.rewards.invalid_action_penalty
-                    r -= penalty
-                    self._add_blue_return(-penalty)
                 self._snap(f"{actor_tag}_pick_invalid")
-                return self._apply_score_delta(r, blue_score_before)
             can_take = int(self.pickups[idx, color])
             inv_sum = int(rob.inv[0]) + int(rob.inv[1])
             room = int(prof.capacity - inv_sum)
@@ -337,13 +269,7 @@ class EurobotWorld:
                     inventory=self._inventory_snapshot(rob.inv),
                 )
                 detail.update(self._describe_node(node))
-                if actor_tag == "blue":
-                    penalty = self.rewards.invalid_action_penalty
-                    r -= penalty
-                    self._add_blue_return(-penalty)
-                    self.last_invalid_detail = detail
                 self._snap(f"{actor_tag}_pick_empty", invalid_detail=detail)
-            return self._apply_score_delta(r, blue_score_before)
 
         if verb == Verb.PLACE:
             idx = self.pantry_idx[node]
@@ -358,13 +284,7 @@ class EurobotWorld:
                     inventory=self._inventory_snapshot(rob.inv),
                 )
                 detail.update(self._describe_node(node))
-                if actor_tag == "blue":
-                    penalty = self.rewards.invalid_action_penalty
-                    r -= penalty
-                    self._add_blue_return(-penalty)
-                    self.last_invalid_detail = detail
                 self._snap(f"{actor_tag}_place_empty", invalid_detail=detail)
-                return self._apply_score_delta(r, blue_score_before)
 
             if idx != -1:  # placing at a pantry
                 p0 = int(self.pantries[idx, 0]); p1 = int(self.pantries[idx, 1])
@@ -386,42 +306,30 @@ class EurobotWorld:
                         inventory=self._inventory_snapshot(rob.inv),
                     )
                     detail.update(self._describe_node(node))
-                    if actor_tag == "blue":
-                        penalty = self.rewards.invalid_action_penalty
-                        r -= penalty
-                        self._add_blue_return(-penalty)
-                        self.last_invalid_detail = detail
                     self._snap(f"{actor_tag}_place_full", invalid_detail=detail)
-                return self._apply_score_delta(r, blue_score_before)
 
-            if actor_tag=="blue" and node == self.NEST_BLUE:
+            if actor_tag=="blue" and node == NEST_BLUE:
                 put = max(0, min(qty, have))
-                delta = min(put, max(0, NEST_CAP_BLUE - int(self.nest_blue_counted)))
+                #TODO: allow placing more than nest_cap but only reward up to nest_cap
+                delta = min(put, max(0, NEST_CAP - int(self.nest_blue)))
                 if delta > 0:
-                    rob.inv[color]         -= delta
-                    self.nest_blue_counted += delta
+                    rob.inv[color] -= delta
+                    self.nest_blue += delta
                     self._snap(f"{actor_tag}_place")
                 else:
-                    penalty = self.rewards.invalid_action_penalty
-                    r -= penalty
-                    self._add_blue_return(-penalty)
                     self._snap(f"{actor_tag}_place_nest_full")
-                return self._apply_score_delta(r, blue_score_before)
 
-            if actor_tag=="yellow" and node == self.NEST_YELL:
+            if actor_tag=="yellow" and node == NEST_YELL:
                 put = max(0, min(qty, have))
-                if put > 0:
-                    rob.inv[color]          -= put
-                    self.nest_yellow_counted += put
+                delta = min(put, max(0, NEST_CAP - int(self.nest_yellow)))
+                if delta > 0:
+                    rob.inv[color]   -= delta
+                    self.nest_yellow += delta
                     self._snap(f"{actor_tag}_place")
                 else:
                     self._snap(f"{actor_tag}_place_nest_full")
-                return self._apply_score_delta(r, blue_score_before)
 
             if actor_tag == "blue":
-                penalty = self.rewards.invalid_action_penalty
-                r -= penalty
-                self._add_blue_return(-penalty)
                 detail = dict(
                     reason="invalid_location",
                     actor=actor_tag,
@@ -431,20 +339,13 @@ class EurobotWorld:
                     inventory=self._inventory_snapshot(rob.inv),
                 )
                 detail.update(self._describe_node(node))
-                self.last_invalid_detail = detail
                 self._snap(f"{actor_tag}_place_invalid", invalid_detail=detail)
             else:
                 self._snap(f"{actor_tag}_place_invalid")
-            return self._apply_score_delta(r, blue_score_before)
 
         if verb == Verb.FLIP:
             if not prof.can_flip:
-                if actor_tag == "blue":
-                    penalty = self.rewards.invalid_action_penalty
-                    r -= penalty
-                    self._add_blue_return(-penalty)
                 self._snap(f"{actor_tag}_flip_blocked")
-                return self._apply_score_delta(r, blue_score_before)
             # move from most abundant non-target to target
             src_candidates = [Col.BLUE, Col.YELLOW]
             if color in src_candidates: src_candidates.remove(Col(color))
@@ -460,34 +361,17 @@ class EurobotWorld:
                     inventory=self._inventory_snapshot(rob.inv),
                 )
                 detail.update(self._describe_node(node))
-                if actor_tag == "blue":
-                    penalty = self.rewards.invalid_action_penalty
-                    r -= penalty
-                    self._add_blue_return(-penalty)
-                    self.last_invalid_detail = detail
                 self._snap(f"{actor_tag}_flip_empty", invalid_detail=detail)
-                return self._apply_score_delta(r, blue_score_before)
             rob.inv[src]   -= k
             rob.inv[color] += k
             self._snap(f"{actor_tag}_flip")
-            return self._apply_score_delta(r, blue_score_before)
 
         if verb == Verb.STEAL:
             if not self.allow_steal:
-                if actor_tag == "blue":
-                    penalty = self.rewards.invalid_action_penalty
-                    r -= penalty
-                    self._add_blue_return(-penalty)
                 self._snap(f"{actor_tag}_steal_blocked")
-                return self._apply_score_delta(r, blue_score_before)
             idx = self.pantry_idx[node]
             if idx == -1:
-                if actor_tag == "blue":
-                    penalty = self.rewards.invalid_action_penalty
-                    r -= penalty
-                    self._add_blue_return(-penalty)
                 self._snap(f"{actor_tag}_steal_invalid")
-                return self._apply_score_delta(r, blue_score_before)
             have = int(self.pantries[idx, color])
             inv_sum = int(rob.inv[0]) + int(rob.inv[1])
             room = int(prof.capacity - inv_sum)
@@ -508,88 +392,36 @@ class EurobotWorld:
                     inventory=self._inventory_snapshot(rob.inv),
                 )
                 detail.update(self._describe_node(node))
-                if actor_tag == "blue":
-                    penalty = self.rewards.invalid_action_penalty
-                    r -= penalty
-                    self._add_blue_return(-penalty)
-                    self.last_invalid_detail = detail
                 self._snap(f"{actor_tag}_steal_empty", invalid_detail=detail)
-            return self._apply_score_delta(r, blue_score_before)
-
-        return self._apply_score_delta(r, blue_score_before)
-
-    # ----- terminal bonus -----
-    def _terminal_bonus(self) -> float:
-        bonus = 0.0
-        for k,_ in enumerate(self.PANTRIES):
-            blue = int(self.pantries[k, Col.BLUE])
-            yell = int(self.pantries[k, Col.YELLOW])
-            if blue > yell: bonus += self.rewards.interest_bonus
-        if int(self.blue.node) == self.NEST_BLUE:
-            bonus += self.rewards.finish_in_nest_bonus
-        return bonus
-
-    def _rebuild_pantry_aggregates(self) -> None:
-        if self.pantries.size == 0:
-            self._pantry_blue_total = 0
-            self._pantry_yellow_total = 0
-            self._blue_majority_cnt = 0
-            self._yellow_majority_cnt = 0
-            return
-
-        blue = self.pantries[:, Col.BLUE].astype(np.int64)
-        yellow = self.pantries[:, Col.YELLOW].astype(np.int64)
-        self._pantry_blue_total = int(blue.sum())
-        self._pantry_yellow_total = int(yellow.sum())
-        self._blue_majority_cnt = int(np.sum(blue > yellow))
-        self._yellow_majority_cnt = int(np.sum(yellow > blue))
-
-    def _update_pantry_row_aggregates(self, k: int, old_b: int, old_y: int, new_b: int, new_y: int) -> None:
-        # totals
-        self._pantry_blue_total   += (new_b - old_b)
-        self._pantry_yellow_total += (new_y - old_y)
-        # majority counters
-        if old_b > old_y: self._blue_majority_cnt -= 1
-        elif old_y > old_b: self._yellow_majority_cnt -= 1
-        if new_b > new_y: self._blue_majority_cnt += 1
-        elif new_y > new_b: self._yellow_majority_cnt += 1
-
+    
+    def _check_valid_action(self, node, color, qty, robot):
+        if node < 0 or node > self.N - 1:
+            return False
+        
+        if color < 0 or color > NUM_COLORS -1:
+            return False
+    
+        if qty < 0 or qty > robot.profile.max_action_qty:
+            return False
+        
+        return True
+    
     def final_scores(self) -> Tuple[float, float]:
         r = self.rewards
-        blue_score   = r.pantry_bonus * int(self._pantry_blue_total)   + r.nest_bonus * int(self.nest_blue_counted)
-        yellow_score = r.pantry_bonus * int(self._pantry_yellow_total) + r.nest_bonus * int(self.nest_yellow_counted)
+        blue_score = self.pantries[:,Col.BLUE].sum() * r.pantry_bonus + self.nest_blue * r.nest_bonus 
+        yellow_score = self.pantries[:,Col.YELLOW].sum() * r.pantry_bonus + self.nest_yellow * r.nest_bonus 
 
-        if r.interest_bonus:
-            blue_score   += r.interest_bonus * int(self._blue_majority_cnt)
-            yellow_score += r.interest_bonus * int(self._yellow_majority_cnt)
+        blue_score   += r.interest_bonus * (self.pantries[:,Col.BLUE]>self.pantries[:,Col.YELLOW]).sum()
+        yellow_score += r.interest_bonus * (self.pantries[:,Col.YELLOW]>self.pantries[:,Col.BLUE]).sum()
 
-        if self.blue.node == self.NEST_BLUE:
+        if self.blue.node == NEST_BLUE:
             blue_score += r.finish_in_nest_bonus
-        if self.yellow.node == self.NEST_YELL:
+        if self.yellow.node == NEST_YELL:
             yellow_score += r.finish_in_nest_bonus
         return float(blue_score), float(yellow_score)
-
-    # ----- helpers -----
-    def _add_blue_return(self, delta: float):
-        if abs(delta) > 1e-9:
-            self.blue_return = float(self.blue_return + delta)
-
-    def _apply_score_delta(self, r: float, blue_score_before: float) -> float:
-        blue_score_after = self._dense_blue_score()
-        delta = blue_score_after - blue_score_before
-        if abs(delta) > 1e-9:
-            r += delta
-            self._add_blue_return(delta)
-        return r
-
-    def _dense_blue_score(self) -> float:
-        blue_pantry = int(self.pantries[:, Col.BLUE].sum()) if self.pantries.size else 0
-        score = self.rewards.pantry_bonus * blue_pantry
-        score += self.rewards.nest_bonus * int(self.nest_blue_counted)
-        return float(score)
-
+    
     def _snap(self, tag: str, **extra):
-        # return # slows down learning
+        return # slows down learning
         blue_score, yellow_score = self.final_scores()
         snap = dict(
             tag=tag,
@@ -600,25 +432,16 @@ class EurobotWorld:
             yellow_inv=self.yellow.inv.copy(),
             pantries=self.pantries.copy(),
             pickups=self.pickups.copy(),
-            nest_blue=int(self.nest_blue_counted),
-            nest_yellow=int(self.nest_yellow_counted),
+            nest_blue=int(self.nest_blue),
+            nest_yellow=int(self.nest_yellow),
             blue_score=float(blue_score),
             yellow_score=float(yellow_score),
-            blue_return=float(self.blue_return),
+            blue_return=float(0),
         )
         if extra:
             snap["extra"] = extra
         self.history.append(snap)
 
-    #TODO move all these helpers below somewhere else
-    def _nearest(self, start: int, pool: List[int]) -> int:
-        i = int(np.argmin(self.D[start, pool] + 1e-6))
-        return int(pool[i])
-
-    def _pickup_avail(self, node: int, color: int) -> int:
-        idx = self.pickup_idx[node]
-        return 0 if idx == -1 else int(self.pickups[idx, color])
-    
     def _describe_node(self, node: int) -> Dict[str, Any]:
         node_idx = int(np.clip(node, 0, self.N - 1))
         n = self.nodes[node_idx]
@@ -626,61 +449,3 @@ class EurobotWorld:
 
     def _inventory_snapshot(self, inv: np.ndarray) -> Dict[str, int]:
         return {Col(i).name.lower(): int(inv[i]) for i in range(NUM_COLORS)}
-    
-    # --- policy helpers (thin wrappers) ---
-    def pickup_avail(self, node: int, color: int) -> int:
-        return self._pickup_avail(node, color)
-
-    def pantry_avail(self, node: int, color: int) -> int:
-        idx = self.pantry_idx[node]
-        return 0 if idx == -1 else int(self.pantries[idx, color])
-
-    def nearest_pickup_with_stock(self, start: int, color: int) -> Optional[int]:
-        pool = [self.PICKUPS[i] for i in range(len(self.PICKUPS)) if self.pickups[i, color] > 0]
-        if not pool:
-            return None
-        return self._nearest(start, pool)
-
-    def pref_pick_color(self, actor_tag: str) -> int:
-        # yellow prefers YELLOW, blue prefers BLUE, fall back to BLUE
-        return int(Col.YELLOW if actor_tag=="yellow" else Col.BLUE)
-
-    def best_pantry_for(self, actor_tag: str, prefer_spread: bool=False) -> int:
-        # simple score: distance penalty + room left; prefer spread penalizes current majority
-        scores=[]
-        rob = (self.yellow if actor_tag=="yellow" else self.blue)
-        for k,i in enumerate(self.PANTRIES):
-            # pantries[k] stores counts per color; sum explicitly
-            p0 = int(self.pantries[k, 0]); p1 = int(self.pantries[k, 1])
-            total = p0 + p1
-            room  = max(0, self.pantry_cap - total) if self.pantry_cap > 0 else 999
-            if room <= 0:
-                continue
-            dist = float(self.D[rob.node, i])
-            spread_pen = 0.0
-            if prefer_spread:
-                # penalize heavy current color presence
-                spread_pen = float(self.pantries[k, Col.BLUE]**2 + self.pantries[k, Col.YELLOW]**2) * 0.05
-            scores.append((1.0*room - 0.5*dist - spread_pen, i))
-        if not scores:
-            return self.PANTRIES[0]
-        scores.sort(reverse=True, key=lambda t: t[0])
-        return scores[0][1]
-
-    def best_pantry_to_steal(self, actor_tag: str, near_from: int) -> Optional[int]:
-        if not self.allow_steal: return None
-        opp_color = Col.BLUE if actor_tag=="yellow" else Col.YELLOW
-        cand=[]
-        for k,i in enumerate(self.PANTRIES):
-            if int(self.pantries[k, opp_color]) > 0:
-                dist = float(self.D[near_from, i])
-                margin = int(self.pantries[k, opp_color]) - int(self.pantries[k, 1-opp_color])
-                cand.append((1.5*margin - 0.4*dist, i))
-        if not cand: return None
-        cand.sort(reverse=True, key=lambda t: t[0])
-        return cand[0][1]
-
-    def prefer_steal_color(self, actor_tag: str, pantry_node: int) -> int:
-        # steal opponent color when available (only two colors remain)
-        opp = Col.BLUE if actor_tag=="yellow" else Col.YELLOW
-        return int(opp)

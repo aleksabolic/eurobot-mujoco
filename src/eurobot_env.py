@@ -4,28 +4,26 @@ import gymnasium as gym
 from gymnasium import spaces
 from typing import Optional, Tuple
 from eurobot_world import EurobotWorld, Col
-from robot import RobotProfile, Verb
-from policies import load_robot_config
+from robot import Verb
 
 class EurobotDiscreteEnv(gym.Env):
     """
     Single-agent (BLUE) Gym env wrapping EurobotWorld.
     Action = MultiDiscrete [verb(len(Verb)), node(N), color(2), qty(0..max_qty)].
-    One env.step = one BLUE decision; world advances to next event completion.
+    One env.step = one BLUE decision; 
     """
     metadata = {"render_modes": [], "name": "EurobotDiscrete-v1"}
 
     def __init__(self, seed: Optional[int]=None):
         super().__init__()
-        # TODO: move config loading out of ctor if needed
-        blue_prof, blue_pol = load_robot_config("robot_configs/blue_robot.json")
-        yellow_prof, yellow_pol = load_robot_config("robot_configs/yellow_robot.json")
+   
+        blue_config_dir = "robot_configs/blue_robot.json"
+        yellow_config_dir = "robot_configs/yellow_robot.json"
 
-        self.world = EurobotWorld(blue_prof, yellow_prof, seed=seed)
-        self.world.yellow_policy = yellow_pol
+        self.world = EurobotWorld(blue_config_dir, yellow_config_dir, seed=seed)
 
         self.n_nodes = len(self.world.nodes)
-        self.max_qty = int(blue_prof.max_action_qty)  # assumed same for obs space shape
+        self.max_qty = int(self.world.blue.profile.max_action_qty)  # assumed same for obs space shape
         self.num_colors = len(Col)
 
         # TODO: remove + 1 in self.max_qty+1 as zero actions are invalid
@@ -41,7 +39,6 @@ class EurobotDiscreteEnv(gym.Env):
             + self.num_colors * len(self.world.PICKUPS)
             + 2  # nest counts (blue, yellow)
         )
-        #TODO: replace low, high to vectors, not scalars
         self.observation_space = spaces.Box(low=0.0, high=1e6, shape=(obs_dim,), dtype=np.float32)
         self._obs_buf = np.zeros((obs_dim,), dtype=np.float32)
         # slices: blue_node, yellow_node, blue_inv, pantries, pickups
@@ -60,14 +57,13 @@ class EurobotDiscreteEnv(gym.Env):
     #TODO: remove final_score calculation on each step
     def step(self, action: np.ndarray):
         v, n, c, q = map(int, action)
-        r, done = self.world.step_blue((v, n, c, q))
+        done = self.world.step_blue((v, n, c, q))
         info = {}
-        done_flag = bool(done)
-        if done_flag:
+        if done:
             blue_final, yellow_final = self.world.final_scores()
             info["blue_final_score"] = float(blue_final)
             info["yellow_final_score"] = float(yellow_final)
-        return self._obs(), float(r), done_flag, False, info
+        return self._obs(), 0, done, False, info
 
     def _obs(self):
         w = self.world
@@ -81,5 +77,5 @@ class EurobotDiscreteEnv(gym.Env):
         # pantries/pickups flattened
         o[self._sl_pan]  = w.pantries.reshape(-1)
         o[self._sl_pick] = w.pickups.reshape(-1)
-        o[self._sl_nest] = (float(w.nest_blue_counted), float(w.nest_yellow_counted))
+        o[self._sl_nest] = (float(w.nest_blue), float(w.nest_yellow))
         return o

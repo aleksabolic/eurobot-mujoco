@@ -135,8 +135,8 @@ class EurobotCV2Renderer:
             pantries, pickups = s["pantries"], s["pickups"]
             blue_inv, yellow_inv = s["blue_inv"], s["yellow_inv"]
             t_left = s["t_left"]
-            nest_blue = int(s.get("nest_blue", self.world.nest_blue_counted))
-            nest_yellow = int(s.get("nest_yellow", self.world.nest_yellow_counted))
+            nest_blue = int(s.get("nest_blue", self.world.nest_blue))
+            nest_yellow = int(s.get("nest_yellow", self.world.nest_yellow))
             if "blue_score" in s and "yellow_score" in s:
                 blue_score = float(s["blue_score"])
                 yellow_score = float(s["yellow_score"])
@@ -150,8 +150,8 @@ class EurobotCV2Renderer:
             pantries, pickups = self.world.pantries, self.world.pickups
             blue_inv, yellow_inv = self.world.blue.inv, self.world.yellow.inv
             t_left = self.world.t_left
-            nest_blue = int(self.world.nest_blue_counted)
-            nest_yellow = int(self.world.nest_yellow_counted)
+            nest_blue = int(self.world.nest_blue)
+            nest_yellow = int(self.world.nest_yellow)
             blue_score, yellow_score = self.world.final_scores()
             blue_return = float(getattr(self.world, "blue_return", 0.0))
 

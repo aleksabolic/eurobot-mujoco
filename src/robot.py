@@ -72,6 +72,8 @@ class RobotProfile:
     
 @dataclass
 class RobotState:
-    node: int
+    tag: str                             # blue/yellow
+    profile: RobotProfile   
+    node: int                            # current node position
     inv: np.ndarray                      # shape (2,) -> [blue, yellow]
     event: Optional[Tuple[float, Callable[[], None]]] = None  # (remaining_time_s, on_finish)

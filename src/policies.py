@@ -121,7 +121,6 @@ class BalancedPolicy(Policy):
         qty = min(avail, prof.max_action_qty, prof.capacity - inv_sum)
         return (int(Verb.PICK), node, int(target_color), qty)
 
-
 class StaticPolicy(Policy):
     name = "static"
 
@@ -264,8 +263,8 @@ class StaticPolicy(Policy):
         return color
 
     def _parse_qty(self, raw: Any, verb: int, world: "EurobotWorld") -> int:  # type: ignore
-        max_qty = int(world.yellow_prof.max_action_qty)
-        capacity = int(world.yellow_prof.capacity)
+        max_qty = int(world.yellow.profile.max_action_qty)
+        capacity = int(world.yellow.profile.capacity)
         verb_enum = Verb(int(verb))
 
         if raw is None:
