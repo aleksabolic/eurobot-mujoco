@@ -1,0 +1,83 @@
+profile:
+  v_mean: 0.1
+  t_startstop: 1.0
+  t_pick_base: 1.0
+  t_pick_per: 0.3
+  t_place_base: 0.5
+  t_place_per: 0.5
+  t_flip_base: 0.5
+  t_flip_per: 0.25
+  can_flip: true
+  max_action_qty: 4
+  capacity: 6
+  v_max: 0.2
+  a_max: 1
+policy:
+  kind: static
+  params:
+    loop: true
+    sequence:
+      - verb: PICK
+        node: P1
+        color: yellow
+        qty: 2
+      - verb: PLACE
+        node: PantryA
+        color: yellow
+        qty: 2
+      - verb: PICK
+        node: P3
+        color: yellow
+        qty: 2
+      - verb: PLACE
+        node: PantryD
+        color: yellow
+        qty: 2
+      - verb: PICK
+        node: P5
+        color: yellow
+        qty: 2
+      - verb: PLACE
+        node: PantryC
+        color: yellow
+        qty: 2
+      - verb: PICK
+        node: P7
+        color: yellow
+        qty: 2
+      - verb: PLACE
+        node: PantryH
+        color: yellow
+        qty: 2
+      - verb: PICK
+        node: P2
+        color: yellow
+        qty: 2
+      - verb: PLACE
+        node: PantryB
+        color: yellow
+        qty: 2
+      - verb: PICK
+        node: P4
+        color: yellow
+        qty: 2
+      - verb: PLACE
+        node: PantryE
+        color: yellow
+        qty: 2
+      - verb: PICK
+        node: P6
+        color: yellow
+        qty: 2
+      - verb: PLACE
+        node: PantryF
+        color: yellow
+        qty: 2
+      - verb: PICK
+        node: P8
+        color: yellow
+        qty: 2
+      - verb: PLACE
+        node: PantryI
+        color: yellow
+        qty: 2

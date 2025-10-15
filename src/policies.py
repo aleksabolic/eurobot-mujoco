@@ -1,6 +1,6 @@
 from __future__ import annotations
 from typing import Optional, Tuple, Dict, Any, List, Sequence, Union
-import json
+import yaml
 import numpy as np
 from robot import RobotProfile, Verb, RobotState
 
@@ -307,11 +307,13 @@ def save_robot_config(path: str,
                       policy: Policy):
     cfg = {"profile": profile.to_dict(), "policy": policy.to_config()}
     with open(path, "w") as f:
-        json.dump(cfg, f, indent=2)
+        yaml.safe_dump(cfg, f, sort_keys=False)
 
 def load_robot_config(path: str) -> Tuple[RobotProfile, Policy]:
     with open(path, "r") as f:
-        cfg = json.load(f)
+        cfg = yaml.safe_load(f)
+    if cfg is None:
+        raise ValueError(f"Robot config at {path} is empty.")
     profile = RobotProfile.from_dict(cfg["profile"])
     policy  = Policy.from_config(cfg["policy"])
     return profile, policy

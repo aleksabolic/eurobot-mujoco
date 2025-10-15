@@ -15,8 +15,8 @@ from eurobot_env import EurobotDiscreteEnv
 
 @pytest.fixture()
 def robot_profiles():
-    blue_prof, blue_policy = load_robot_config("robot_configs/blue_robot.json")
-    yellow_prof, yellow_policy = load_robot_config("robot_configs/yellow_robot.json")
+    blue_prof, blue_policy = load_robot_config("robot_configs/blue_robot.yaml")
+    yellow_prof, yellow_policy = load_robot_config("robot_configs/yellow_robot.yaml")
     return (blue_prof, blue_policy), (yellow_prof, yellow_policy)
 
 

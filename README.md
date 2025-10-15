@@ -30,7 +30,7 @@ python src/eval.py --model runs/<checkpoint-name>.zip --render --fps 5
 Add `--render` for live OpenCV playback, adjust `--fps` for slower/faster replays, or `--gif path/to/output.gif` to export animations (requires `imageio`).
 
 ## Robot Configuration
-Robot motion/handling profiles and opponent heuristics live in `robot_configs/blue_robot.json` and `robot_configs/yellow_robot.json`.
+Robot motion/handling profiles and opponent heuristics live in `robot_configs/blue_robot.yaml` and `robot_configs/yellow_robot.yaml`.
 
 ## Project Layout
 - `src/eurobot_env.py` – Gymnasium wrapper around the Eurobot world with discrete actions.

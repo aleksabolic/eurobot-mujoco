@@ -17,8 +17,8 @@ class EurobotDiscreteEnv(gym.Env):
     def __init__(self, seed: Optional[int]=None):
         super().__init__()
    
-        blue_config_dir = "robot_configs/blue_robot.json"
-        yellow_config_dir = "robot_configs/yellow_robot.json"
+        blue_config_dir = "robot_configs/blue_robot.yaml"
+        yellow_config_dir = "robot_configs/yellow_robot.yaml"
 
         self.world = EurobotWorld(blue_config_dir, yellow_config_dir, seed=seed)
 
