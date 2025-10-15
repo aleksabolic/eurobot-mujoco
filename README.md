@@ -29,6 +29,16 @@ python src/eval.py --model runs/<checkpoint-name>.zip --render --fps 5
 ```
 Add `--render` for live OpenCV playback, adjust `--fps` for slower/faster replays, or `--gif path/to/output.gif` to export animations (requires `imageio`).
 
+## AlphaZero Training
+```bash
+python src/train_alphazero.py \
+  --iterations 20 \
+  --games-per-iter 8 \
+  --num-simulations 128 \
+  --save-model runs/alphazero/latest.pt
+```
+The script launches self-play with MCTS-guided planning. Adjust `--device`, `--learning-rate`, or `--checkpoint-dir` to tune performance and persistence.
+
 ## Robot Configuration
 Robot motion/handling profiles and opponent heuristics live in `robot_configs/blue_robot.yaml` and `robot_configs/yellow_robot.yaml`.
 
@@ -37,6 +47,8 @@ Robot motion/handling profiles and opponent heuristics live in `robot_configs/bl
 - `src/eurobot_world.py` – Core match simulation, scoring, and logistics logic.
 - `src/masked_policy.py` & `src/policies.py` – Custom SB3 policy with action masking and scripted opponent.
 - `src/train.py`, `src/eval.py` – PPO training loop and evaluation utility.
+- `src/alphazero/` – AlphaZero components (action helper, neural net, MCTS, trainer).
+- `src/train_alphazero.py` – Command-line entrypoint for AlphaZero self-play training.
 - `assets/` – Arena layout and geometry assets used by the simulator.
 - `robot_configs/` – Editable robot capability/policy presets.
 - `tests/` – PyTest suite covering world mechanics edge cases.

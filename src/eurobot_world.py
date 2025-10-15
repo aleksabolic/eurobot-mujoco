@@ -449,3 +449,47 @@ class EurobotWorld:
 
     def _inventory_snapshot(self, inv: np.ndarray) -> Dict[str, int]:
         return {Col(i).name.lower(): int(inv[i]) for i in range(NUM_COLORS)}
+
+    # ----- serialization helpers -----
+    def _robot_state_to_dict(self, robot: RobotState) -> Dict[str, Any]:
+        return dict(
+            tag=str(robot.tag),
+            node=int(robot.node),
+            inv=robot.inv.copy(),
+            event=None if robot.event is None else tuple(robot.event),
+        )
+
+    def _robot_state_from_dict(self, robot: RobotState, data: Dict[str, Any]) -> None:
+        robot.node = int(data["node"])
+        robot.inv[...] = data["inv"]
+        robot.event = None if data["event"] is None else list(data["event"])
+
+    def get_state(self) -> Dict[str, Any]:
+        """Return a deep copy of the mutable world state for planning algorithms."""
+        return dict(
+            t_left=float(self.t_left),
+            pantries=self.pantries.copy(),
+            pickups=self.pickups.copy(),
+            nest_blue=int(self.nest_blue),
+            nest_yellow=int(self.nest_yellow),
+            blue=self._robot_state_to_dict(self.blue),
+            yellow=self._robot_state_to_dict(self.yellow),
+            allow_steal=bool(self.allow_steal),
+            pantry_cap=int(self.pantry_cap),
+            history=list(self.history),
+            rng_state=self.rng.bit_generator.state,
+        )
+
+    def set_state(self, state: Dict[str, Any]) -> None:
+        """Restore world state obtained from :meth:`get_state`."""
+        self.t_left = float(state["t_left"])
+        self.pantries[...] = state["pantries"]
+        self.pickups[...] = state["pickups"]
+        self.nest_blue = int(state["nest_blue"])
+        self.nest_yellow = int(state["nest_yellow"])
+        self._robot_state_from_dict(self.blue, state["blue"])
+        self._robot_state_from_dict(self.yellow, state["yellow"])
+        self.allow_steal = bool(state.get("allow_steal", self.allow_steal))
+        self.pantry_cap = int(state.get("pantry_cap", self.pantry_cap))
+        self.history = list(state.get("history", []))
+        self.rng.bit_generator.state = state["rng_state"]

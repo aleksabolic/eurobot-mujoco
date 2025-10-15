@@ -75,7 +75,16 @@ class EurobotDiscreteEnv(gym.Env):
         # inventories
         o[self._sl_inv_b] = w.blue.inv
         # pantries/pickups flattened
-        o[self._sl_pan]  = w.pantries.reshape(-1)
+        o[self._sl_pan] = w.pantries.reshape(-1)
         o[self._sl_pick] = w.pickups.reshape(-1)
         o[self._sl_nest] = (float(w.nest_blue), float(w.nest_yellow))
         return o
+
+    # --- planning utilities ---
+    def get_state(self):
+        """Serialize environment state for tree search cloning."""
+        return dict(world=self.world.get_state())
+
+    def set_state(self, state):
+        """Restore environment state previously captured by :meth:`get_state`."""
+        self.world.set_state(state["world"])
