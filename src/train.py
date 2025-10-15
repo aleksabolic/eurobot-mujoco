@@ -10,7 +10,7 @@ from stable_baselines3.common.monitor import Monitor
 from gymnasium.wrappers import TimeLimit
 import torch
 from eurobot_env import EurobotDiscreteEnv
-from eurobot_world import NEST_CAP_BLUE
+from eurobot_world import NEST_CAP
 from robot import RobotProfile
 from masked_policy import MaskedMultiCatPolicy
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList
@@ -190,9 +190,9 @@ if __name__ == "__main__":
     n_nodes = _tmp.n_nodes
     max_qty = _tmp.max_qty
     tmp_world = _tmp.world
-    capacity = int(tmp_world.blue_prof.capacity)
+    capacity = int(tmp_world.blue.profile.capacity)
     allow_steal = bool(tmp_world.allow_steal)
-    can_flip = bool(tmp_world.blue_prof.can_flip)
+    can_flip = bool(tmp_world.blue.profile.can_flip)
     pantry_cap = int(tmp_world.pantry_cap)
     nest_blue = tmp_world.NEST_BLUE
     nest_yellow = tmp_world.NEST_YELL
@@ -215,7 +215,7 @@ if __name__ == "__main__":
         pickup_nodes=tmp_world.PICKUPS,
         nest_blue=nest_blue,
         nest_yellow=nest_yellow,
-        nest_cap_blue=NEST_CAP_BLUE,
+        nest_cap_blue=NEST_CAP,
     )
 
     env = DummyVecEnv(env_fns)
