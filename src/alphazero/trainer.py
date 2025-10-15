@@ -68,18 +68,60 @@ class AlphaZeroTrainer:
     def train(self) -> List[Dict[str, float]]:
         metrics_history: List[Dict[str, float]] = []
         for iteration in range(1, self.cfg.num_iterations + 1):
+            print(
+                f"[AlphaZero] Iteration {iteration}/{self.cfg.num_iterations}",
+                flush=True,
+            )
             episode_returns = []
-            for _ in range(self.cfg.games_per_iteration):
+            for game_idx in range(self.cfg.games_per_iteration):
                 stats = self._play_episode()
                 episode_returns.append(stats)
+                print(
+                    "  Self-play {}/{}: steps={} blue_score={:.1f} yellow_score={:.1f} value={:.3f}".format(
+                        game_idx + 1,
+                        self.cfg.games_per_iteration,
+                        int(stats["steps"]),
+                        stats["blue_score"],
+                        stats["yellow_score"],
+                        stats.get("value", 0.0),
+                    ),
+                    flush=True,
+                )
             logs = {"iteration": float(iteration)}
             if episode_returns:
                 mean_score = float(np.mean([s["blue_score"] for s in episode_returns]))
                 logs["episode_blue_score"] = mean_score
                 logs["episode_steps"] = float(np.mean([s["steps"] for s in episode_returns]))
+                logs["episode_yellow_score"] = float(
+                    np.mean([s["yellow_score"] for s in episode_returns])
+                )
+                print(
+                    "  Rollout mean: blue={:.2f} yellow={:.2f} steps={:.1f}".format(
+                        logs["episode_blue_score"],
+                        logs["episode_yellow_score"],
+                        logs["episode_steps"],
+                    ),
+                    flush=True,
+                )
             train_logs = self._optimize()
             if train_logs:
                 logs.update(train_logs)
+                print(
+                    "  Optimize: loss={:.4f} policy={:.4f} value={:.4f} entropy={:.4f} buffer={}".format(
+                        train_logs.get("loss", 0.0),
+                        train_logs.get("policy_loss", 0.0),
+                        train_logs.get("value_loss", 0.0),
+                        train_logs.get("entropy", 0.0),
+                        int(train_logs.get("buffer_size", len(self.replay))),
+                    ),
+                    flush=True,
+                )
+            else:
+                logs["buffer_size"] = float(len(self.replay))
+                print(
+                    f"  Optimize: skipped (buffer={len(self.replay)})",
+                    flush=True,
+                )
             metrics_history.append(logs)
             self._maybe_checkpoint(iteration)
         return metrics_history
@@ -125,6 +167,7 @@ class AlphaZeroTrainer:
         logs["value_loss"] = float(np.mean(value_losses))
         logs["loss"] = float(np.mean(total_losses))
         logs["entropy"] = float(np.mean(entropies))
+        logs["buffer_size"] = float(len(self.replay))
         return logs
 
     def _play_episode(self) -> Dict[str, float]:
@@ -164,7 +207,12 @@ class AlphaZeroTrainer:
         for item in episode_data:
             self.replay.add(item["obs"], item["pi"], value)
 
-        return {"steps": float(step_idx), "blue_score": float(blue_score), "yellow_score": float(yellow_score)}
+        return {
+            "steps": float(step_idx),
+            "blue_score": float(blue_score),
+            "yellow_score": float(yellow_score),
+            "value": float(value),
+        }
 
 
     def _score_to_value(self, blue_score: float, yellow_score: float) -> float:
