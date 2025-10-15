@@ -18,8 +18,8 @@ class EurobotDiscreteEnv(gym.Env):
     def __init__(self, seed: Optional[int]=None):
         super().__init__()
         # TODO: move config loading out of ctor if needed
-        blue_prof, blue_pol = load_robot_config("robot_configs/blue_robot.json")
-        yellow_prof, yellow_pol = load_robot_config("robot_configs/yellow_robot.json")
+        blue_prof, blue_pol = load_robot_config("robot_configs/blue_robot.yaml")
+        yellow_prof, yellow_pol = load_robot_config("robot_configs/yellow_robot.yaml")
 
         self.world = EurobotWorld(blue_prof, yellow_prof, seed=seed)
         self.world.yellow_policy = yellow_pol

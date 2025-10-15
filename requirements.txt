@@ -10,3 +10,4 @@ rich
 opencv-python
 imageio>=2.34
 pytest>=8.0
+PyYAML

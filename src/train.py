@@ -14,6 +14,7 @@ from eurobot_world import NEST_CAP_BLUE
 from robot import RobotProfile
 from masked_policy import MaskedMultiCatPolicy
 from stable_baselines3.common.callbacks import BaseCallback, CallbackList
+from policies import save_robot_config, Policy
 
 torch.set_num_threads(1)
 try: torch.set_num_interop_threads(1)
@@ -173,13 +174,14 @@ if __name__ == "__main__":
     save_ckpt_path.parent.mkdir(parents=True, exist_ok=True)
     save_vecnorm_path.parent.mkdir(parents=True, exist_ok=True)
 
-    robot_cfg_src = Path(__file__).resolve().parent.parent / "robot_configs"
+    _tmp = EurobotDiscreteEnv(seed=SEED)
+    blue_prof, blue_pol = _tmp.world.blue_prof, None
+    yell_prof, yell_pol = _tmp.world.yellow_prof, _tmp.world.yellow_policy
     robot_cfg_dst = save_dir / "robot_configs"
-    if robot_cfg_src.exists():
-        robot_cfg_dst.mkdir(parents=True, exist_ok=True)
-        for cfg_file in robot_cfg_src.iterdir():
-            if cfg_file.is_file():
-                shutil.copy2(cfg_file, robot_cfg_dst / cfg_file.name)
+    robot_cfg_dst.mkdir(parents=True, exist_ok=True)
+    save_robot_config(robot_cfg_dst / "blue_robot.yaml", blue_prof, Policy())
+    save_robot_config(robot_cfg_dst / "yellow_robot.yaml", yell_prof, yell_pol)
+
 
     env_fns = [make_env_i(i) for i in range(N)]
 
