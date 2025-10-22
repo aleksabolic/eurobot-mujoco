@@ -154,18 +154,28 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
             nest_blue=nest_blue,
         )
 
+    @staticmethod
+    def _cpu_contiguous(tensor: th.Tensor, detach: bool = False) -> th.Tensor:
+        out = tensor.detach() if detach else tensor
+        if out.device.type != "cpu":
+            out = out.to("cpu", non_blocking=False)
+        if not out.is_contiguous():
+            out = out.contiguous()
+        return out
+
     def _context_to_cpu(self, ctx: MaskContext) -> MaskContext:
+        to_cpu = self._cpu_contiguous
         return MaskContext(
-            blue_node=ctx.blue_node.detach().to("cpu", non_blocking=False).contiguous(),
-            inv_b=ctx.inv_b.detach().to("cpu", non_blocking=False).contiguous(),
-            inv_sum=ctx.inv_sum.detach().to("cpu", non_blocking=False).contiguous(),
-            cap_left=ctx.cap_left.detach().to("cpu", non_blocking=False).contiguous(),
-            pan=ctx.pan.detach().to("cpu", non_blocking=False).contiguous(),
-            pick=ctx.pick.detach().to("cpu", non_blocking=False).contiguous(),
-            pan_room=ctx.pan_room.detach().to("cpu", non_blocking=False).contiguous(),
-            pan_sum=ctx.pan_sum.detach().to("cpu", non_blocking=False).contiguous(),
-            pick_sum=ctx.pick_sum.detach().to("cpu", non_blocking=False).contiguous(),
-            nest_blue=ctx.nest_blue.detach().to("cpu", non_blocking=False).contiguous(),
+            blue_node=to_cpu(ctx.blue_node, detach=True),
+            inv_b=to_cpu(ctx.inv_b, detach=True),
+            inv_sum=to_cpu(ctx.inv_sum, detach=True),
+            cap_left=to_cpu(ctx.cap_left, detach=True),
+            pan=to_cpu(ctx.pan, detach=True),
+            pick=to_cpu(ctx.pick, detach=True),
+            pan_room=to_cpu(ctx.pan_room, detach=True),
+            pan_sum=to_cpu(ctx.pan_sum, detach=True),
+            pick_sum=to_cpu(ctx.pick_sum, detach=True),
+            nest_blue=to_cpu(ctx.nest_blue, detach=True),
         )
 
     def _mask_ext_call(
@@ -269,104 +279,280 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
         B = obs.size(0)
         device = obs.device
 
-        verb_logits_cpu = verb_logits.detach().to("cpu", non_blocking=False).contiguous()
-        node_logits_cpu = node_logits.detach().to("cpu", non_blocking=False).contiguous()
-        color_logits_cpu = color_logits.detach().to("cpu", non_blocking=False).contiguous()
-        qty_logits_cpu = qty_logits.detach().to("cpu", non_blocking=False).contiguous()
+        if deterministic:
+            verb_logits_cpu = self._cpu_contiguous(verb_logits, detach=True)
+            node_logits_cpu = self._cpu_contiguous(node_logits, detach=True)
+            color_logits_cpu = self._cpu_contiguous(color_logits, detach=True)
+            qty_logits_cpu = self._cpu_contiguous(qty_logits, detach=True)
 
-        verb_mask_cpu, _, _, _ = self._mask_ext_call(
-            ctx_cpu,
+            verb_mask_cpu, _, _, _ = self._mask_ext_call(
+                ctx_cpu,
+                verb_logits_cpu,
+                node_logits_cpu,
+                color_logits_cpu,
+                qty_logits_cpu,
+            )
+            verb_mask = verb_mask_cpu.to(device=device)
+            verb, logp_verb, ent_verb = self._sample_head(verb_logits, verb_mask, deterministic)
+
+            node = ctx.blue_node.clone()
+            logp_node = th.zeros(B, device=device)
+            ent_node = th.zeros(B, device=device)
+            node_required = (verb == Verb.PICK) | (verb == Verb.PLACE) | (verb == Verb.STEAL)
+            if node_required.any():
+                verb_sel = verb.clone()
+                verb_sel[~node_required] = -1
+                verb_sel_cpu = self._cpu_contiguous(verb_sel.to(th.long), detach=True)
+                _, node_mask_cpu, _, _ = self._mask_ext_call(
+                    ctx_cpu,
+                    verb_logits_cpu,
+                    node_logits_cpu,
+                    color_logits_cpu,
+                    qty_logits_cpu,
+                    verb_sel_cpu=verb_sel_cpu,
+                )
+                node_mask = node_mask_cpu.to(device=device)
+                sel_node, lp_node, en_node = self._sample_head(
+                    node_logits[node_required], node_mask[node_required], deterministic
+                )
+                node[node_required] = sel_node
+                logp_node[node_required] = lp_node
+                ent_node[node_required] = en_node
+
+            color = th.zeros(B, dtype=th.long, device=device)
+            logp_color = th.zeros(B, device=device)
+            ent_color = th.zeros(B, device=device)
+            color_required = (verb == Verb.PICK) | (verb == Verb.PLACE) | (verb == Verb.FLIP) | (verb == Verb.STEAL)
+            if color_required.any():
+                verb_sel = verb.clone()
+                verb_sel[~color_required] = -1
+                node_sel = node.clone()
+                node_sel[~color_required] = -1
+                verb_sel_cpu = self._cpu_contiguous(verb_sel.to(th.long), detach=True)
+                node_sel_cpu = self._cpu_contiguous(node_sel.to(th.long), detach=True)
+                _, _, color_mask_cpu, _ = self._mask_ext_call(
+                    ctx_cpu,
+                    verb_logits_cpu,
+                    node_logits_cpu,
+                    color_logits_cpu,
+                    qty_logits_cpu,
+                    verb_sel_cpu=verb_sel_cpu,
+                    node_sel_cpu=node_sel_cpu,
+                )
+                color_mask = color_mask_cpu.to(device=device)
+                sel_color, lp_color, en_color = self._sample_head(
+                    color_logits[color_required], color_mask[color_required], deterministic
+                )
+                color[color_required] = sel_color
+                logp_color[color_required] = lp_color
+                ent_color[color_required] = en_color
+
+            qty = th.zeros(B, dtype=th.long, device=device)
+            logp_qty = th.zeros(B, device=device)
+            ent_qty = th.zeros(B, device=device)
+            qty_required = (verb == Verb.PICK) | (verb == Verb.PLACE) | (verb == Verb.FLIP) | (verb == Verb.STEAL)
+            if qty_required.any():
+                verb_sel = verb.clone()
+                verb_sel[~qty_required] = -1
+                node_sel = node.clone()
+                node_sel[~qty_required] = -1
+                color_sel = color.clone()
+                color_sel[~qty_required] = -1
+                verb_sel_cpu = self._cpu_contiguous(verb_sel.to(th.long), detach=True)
+                node_sel_cpu = self._cpu_contiguous(node_sel.to(th.long), detach=True)
+                color_sel_cpu = self._cpu_contiguous(color_sel.to(th.long), detach=True)
+                _, _, _, qty_mask_cpu = self._mask_ext_call(
+                    ctx_cpu,
+                    verb_logits_cpu,
+                    node_logits_cpu,
+                    color_logits_cpu,
+                    qty_logits_cpu,
+                    verb_sel_cpu=verb_sel_cpu,
+                    node_sel_cpu=node_sel_cpu,
+                    color_sel_cpu=color_sel_cpu,
+                )
+                qty_mask = qty_mask_cpu.to(device=device)
+                sel_qty, lp_qty, en_qty = self._sample_head(
+                    qty_logits[qty_required], qty_mask[qty_required], deterministic
+                )
+                qty[qty_required] = sel_qty
+                logp_qty[qty_required] = lp_qty
+                ent_qty[qty_required] = en_qty
+
+            actions = th.stack([verb, node, color, qty], dim=1)
+            log_prob = logp_verb + logp_node + logp_color + logp_qty
+            entropy = ent_verb + ent_node + ent_color + ent_qty
+            return actions, log_prob, entropy
+
+        verb_logits_cpu = self._cpu_contiguous(verb_logits, detach=True)
+        node_logits_cpu = self._cpu_contiguous(node_logits, detach=True)
+        color_logits_cpu = self._cpu_contiguous(color_logits, detach=True)
+        qty_logits_cpu = self._cpu_contiguous(qty_logits, detach=True)
+
+        verb_idx_cpu, logp_verb_cpu, ent_verb_cpu = self._mask_ext.sample_verb(
             verb_logits_cpu,
-            node_logits_cpu,
-            color_logits_cpu,
-            qty_logits_cpu,
+            ctx_cpu.blue_node,
+            ctx_cpu.inv_b,
+            ctx_cpu.inv_sum,
+            ctx_cpu.cap_left,
+            ctx_cpu.pan,
+            ctx_cpu.pick,
+            ctx_cpu.pan_room,
+            ctx_cpu.pan_sum,
+            ctx_cpu.pick_sum,
+            ctx_cpu.nest_blue,
+            self._pantry_idx_cpu,
+            self._pickup_idx_cpu,
+            self._pantry_nodes_cpu,
+            self._pickup_nodes_cpu,
+            self.n_verbs,
+            self.n_nodes,
+            self.n_colors,
+            self.max_qtyp1,
+            self._capacity_int,
+            self._pantry_cap_int,
+            self._nest_cap_int,
+            self.nest_blue,
+            self.allow_steal,
+            self.can_flip,
+            self.big_neg,
+            self.flip_node_all,
         )
-        verb_mask = verb_mask_cpu.to(device=device)
-        verb, logp_verb, ent_verb = self._sample_head(verb_logits, verb_mask, deterministic)
 
-        node = ctx.blue_node.clone()
-        logp_node = th.zeros(B, device=device)
-        ent_node = th.zeros(B, device=device)
+        verb = verb_idx_cpu.to(device=device, dtype=th.long)
+        logp_verb = logp_verb_cpu.to(device=device)
+        ent_verb = ent_verb_cpu.to(device=device)
+
         node_required = (verb == Verb.PICK) | (verb == Verb.PLACE) | (verb == Verb.STEAL)
-        if node_required.any():
-            verb_sel = verb.clone()
-            verb_sel[~node_required] = -1
-            verb_sel_cpu = verb_sel.to(th.long).to("cpu", non_blocking=False).contiguous()
-            _, node_mask_cpu, _, _ = self._mask_ext_call(
-                ctx_cpu,
-                verb_logits_cpu,
-                node_logits_cpu,
-                color_logits_cpu,
-                qty_logits_cpu,
-                verb_sel_cpu=verb_sel_cpu,
-            )
-            node_mask = node_mask_cpu.to(device=device)
-            sel_node, lp_node, en_node = self._sample_head(
-                node_logits[node_required], node_mask[node_required], deterministic
-            )
-            node[node_required] = sel_node
-            logp_node[node_required] = lp_node
-            ent_node[node_required] = en_node
+        verb_for_node = verb.clone()
+        verb_for_node[~node_required] = -1
+        verb_for_node_cpu = self._cpu_contiguous(verb_for_node.to(th.long), detach=True)
 
-        color = th.zeros(B, dtype=th.long, device=device)
-        logp_color = th.zeros(B, device=device)
-        ent_color = th.zeros(B, device=device)
+        node_idx_cpu, logp_node_cpu, ent_node_cpu = self._mask_ext.sample_node(
+            node_logits_cpu,
+            ctx_cpu.blue_node,
+            ctx_cpu.inv_b,
+            ctx_cpu.inv_sum,
+            ctx_cpu.cap_left,
+            ctx_cpu.pan,
+            ctx_cpu.pick,
+            ctx_cpu.pan_room,
+            ctx_cpu.pan_sum,
+            ctx_cpu.pick_sum,
+            ctx_cpu.nest_blue,
+            self._pantry_idx_cpu,
+            self._pickup_idx_cpu,
+            self._pantry_nodes_cpu,
+            self._pickup_nodes_cpu,
+            verb_for_node_cpu,
+            self.n_verbs,
+            self.n_nodes,
+            self.n_colors,
+            self.max_qtyp1,
+            self._capacity_int,
+            self._pantry_cap_int,
+            self._nest_cap_int,
+            self.nest_blue,
+            self.allow_steal,
+            self.can_flip,
+            self.big_neg,
+            self.flip_node_all,
+        )
+        node = node_idx_cpu.to(device=device, dtype=th.long)
+        logp_node = logp_node_cpu.to(device=device)
+        ent_node = ent_node_cpu.to(device=device)
+
         color_required = (verb == Verb.PICK) | (verb == Verb.PLACE) | (verb == Verb.FLIP) | (verb == Verb.STEAL)
-        if color_required.any():
-            verb_sel = verb.clone()
-            verb_sel[~color_required] = -1
-            node_sel = node.clone()
-            node_sel[~color_required] = -1
-            verb_sel_cpu = verb_sel.to(th.long).to("cpu", non_blocking=False).contiguous()
-            node_sel_cpu = node_sel.to(th.long).to("cpu", non_blocking=False).contiguous()
-            _, _, color_mask_cpu, _ = self._mask_ext_call(
-                ctx_cpu,
-                verb_logits_cpu,
-                node_logits_cpu,
-                color_logits_cpu,
-                qty_logits_cpu,
-                verb_sel_cpu=verb_sel_cpu,
-                node_sel_cpu=node_sel_cpu,
-            )
-            color_mask = color_mask_cpu.to(device=device)
-            sel_color, lp_color, en_color = self._sample_head(
-                color_logits[color_required], color_mask[color_required], deterministic
-            )
-            color[color_required] = sel_color
-            logp_color[color_required] = lp_color
-            ent_color[color_required] = en_color
+        verb_for_color = verb.clone()
+        verb_for_color[~color_required] = -1
+        node_for_color = node.clone()
+        node_for_color[~color_required] = -1
+        verb_for_color_cpu = self._cpu_contiguous(verb_for_color.to(th.long), detach=True)
+        node_for_color_cpu = self._cpu_contiguous(node_for_color.to(th.long), detach=True)
 
-        qty = th.zeros(B, dtype=th.long, device=device)
-        logp_qty = th.zeros(B, device=device)
-        ent_qty = th.zeros(B, device=device)
+        color_idx_cpu, logp_color_cpu, ent_color_cpu = self._mask_ext.sample_color(
+            color_logits_cpu,
+            ctx_cpu.blue_node,
+            ctx_cpu.inv_b,
+            ctx_cpu.inv_sum,
+            ctx_cpu.cap_left,
+            ctx_cpu.pan,
+            ctx_cpu.pick,
+            ctx_cpu.pan_room,
+            ctx_cpu.pan_sum,
+            ctx_cpu.pick_sum,
+            ctx_cpu.nest_blue,
+            self._pantry_idx_cpu,
+            self._pickup_idx_cpu,
+            self._pantry_nodes_cpu,
+            self._pickup_nodes_cpu,
+            verb_for_color_cpu,
+            node_for_color_cpu,
+            self.n_verbs,
+            self.n_nodes,
+            self.n_colors,
+            self.max_qtyp1,
+            self._capacity_int,
+            self._pantry_cap_int,
+            self._nest_cap_int,
+            self.nest_blue,
+            self.allow_steal,
+            self.can_flip,
+            self.big_neg,
+            self.flip_node_all,
+        )
+
+        color = color_idx_cpu.to(device=device, dtype=th.long)
+        logp_color = logp_color_cpu.to(device=device)
+        ent_color = ent_color_cpu.to(device=device)
+
         qty_required = (verb == Verb.PICK) | (verb == Verb.PLACE) | (verb == Verb.FLIP) | (verb == Verb.STEAL)
-        if qty_required.any():
-            verb_sel = verb.clone()
-            verb_sel[~qty_required] = -1
-            node_sel = node.clone()
-            node_sel[~qty_required] = -1
-            color_sel = color.clone()
-            color_sel[~qty_required] = -1
-            verb_sel_cpu = verb_sel.to(th.long).to("cpu", non_blocking=False).contiguous()
-            node_sel_cpu = node_sel.to(th.long).to("cpu", non_blocking=False).contiguous()
-            color_sel_cpu = color_sel.to(th.long).to("cpu", non_blocking=False).contiguous()
-            _, _, _, qty_mask_cpu = self._mask_ext_call(
-                ctx_cpu,
-                verb_logits_cpu,
-                node_logits_cpu,
-                color_logits_cpu,
-                qty_logits_cpu,
-                verb_sel_cpu=verb_sel_cpu,
-                node_sel_cpu=node_sel_cpu,
-                color_sel_cpu=color_sel_cpu,
-            )
-            qty_mask = qty_mask_cpu.to(device=device)
-            sel_qty, lp_qty, en_qty = self._sample_head(
-                qty_logits[qty_required], qty_mask[qty_required], deterministic
-            )
-            qty[qty_required] = sel_qty
-            logp_qty[qty_required] = lp_qty
-            ent_qty[qty_required] = en_qty
+        verb_for_qty = verb.clone()
+        verb_for_qty[~qty_required] = -1
+        node_for_qty = node.clone()
+        node_for_qty[~qty_required] = -1
+        color_for_qty = color.clone()
+        color_for_qty[~qty_required] = -1
+        verb_for_qty_cpu = self._cpu_contiguous(verb_for_qty.to(th.long), detach=True)
+        node_for_qty_cpu = self._cpu_contiguous(node_for_qty.to(th.long), detach=True)
+        color_for_qty_cpu = self._cpu_contiguous(color_for_qty.to(th.long), detach=True)
+
+        qty_idx_cpu, logp_qty_cpu, ent_qty_cpu = self._mask_ext.sample_qty(
+            qty_logits_cpu,
+            ctx_cpu.blue_node,
+            ctx_cpu.inv_b,
+            ctx_cpu.inv_sum,
+            ctx_cpu.cap_left,
+            ctx_cpu.pan,
+            ctx_cpu.pick,
+            ctx_cpu.pan_room,
+            ctx_cpu.pan_sum,
+            ctx_cpu.pick_sum,
+            ctx_cpu.nest_blue,
+            self._pantry_idx_cpu,
+            self._pickup_idx_cpu,
+            self._pantry_nodes_cpu,
+            self._pickup_nodes_cpu,
+            verb_for_qty_cpu,
+            node_for_qty_cpu,
+            color_for_qty_cpu,
+            self.n_verbs,
+            self.n_nodes,
+            self.n_colors,
+            self.max_qtyp1,
+            self._capacity_int,
+            self._pantry_cap_int,
+            self._nest_cap_int,
+            self.nest_blue,
+            self.allow_steal,
+            self.can_flip,
+            self.big_neg,
+            self.flip_node_all,
+        )
+
+        qty = qty_idx_cpu.to(device=device, dtype=th.long)
+        logp_qty = logp_qty_cpu.to(device=device)
+        ent_qty = ent_qty_cpu.to(device=device)
 
         actions = th.stack([verb, node, color, qty], dim=1)
         log_prob = logp_verb + logp_node + logp_color + logp_qty
@@ -386,14 +572,14 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
         device = obs.device
         B = obs.size(0)
 
-        verb_logits_cpu = verb_logits.detach().to("cpu", non_blocking=False).contiguous()
-        node_logits_cpu = node_logits.detach().to("cpu", non_blocking=False).contiguous()
-        color_logits_cpu = color_logits.detach().to("cpu", non_blocking=False).contiguous()
-        qty_logits_cpu = qty_logits.detach().to("cpu", non_blocking=False).contiguous()
+        verb_logits_cpu = self._cpu_contiguous(verb_logits, detach=True)
+        node_logits_cpu = self._cpu_contiguous(node_logits, detach=True)
+        color_logits_cpu = self._cpu_contiguous(color_logits, detach=True)
+        qty_logits_cpu = self._cpu_contiguous(qty_logits, detach=True)
 
-        verb_sel_cpu = verb.detach().to("cpu", non_blocking=False).contiguous()
-        node_sel_cpu = node.detach().to("cpu", non_blocking=False).contiguous()
-        color_sel_cpu = color.detach().to("cpu", non_blocking=False).contiguous()
+        verb_sel_cpu = self._cpu_contiguous(verb.to(th.long), detach=True)
+        node_sel_cpu = self._cpu_contiguous(node.to(th.long), detach=True)
+        color_sel_cpu = self._cpu_contiguous(color.to(th.long), detach=True)
 
         verb_mask_cpu, node_mask_cpu, color_mask_cpu, qty_mask_cpu = self._mask_ext_call(
             ctx_cpu,
