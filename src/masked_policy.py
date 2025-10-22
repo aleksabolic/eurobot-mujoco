@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Dict, Tuple
+from pathlib import Path
+from typing import Dict, Optional, Tuple
 
 import numpy as np
 import torch as th
 from torch.distributions import Categorical
+from torch.utils.cpp_extension import load
 
 from stable_baselines3.common.policies import ActorCriticPolicy
 
@@ -14,6 +16,22 @@ from robot import Verb
 BIG_NEG = -1e9
 COLOR_BLUE = 0
 COLOR_YELLOW = 1
+
+_MASK_EXT = None
+
+
+def _load_mask_ext():
+    global _MASK_EXT
+    if _MASK_EXT is None:
+        src_path = Path(__file__).resolve().with_name("mask_ext.cpp")
+        _MASK_EXT = load(
+            name="mask_ext",
+            sources=[str(src_path)],
+            extra_cflags=["-O3", "-fopenmp"],
+            extra_ldflags=["-fopenmp"],
+            verbose=False,
+        )
+    return _MASK_EXT
 
 
 @dataclass
@@ -58,11 +76,16 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
         self.n_pantries = int(self.mask_cfg.get("n_pantries", 0))
         self.n_pickups = int(self.mask_cfg.get("n_pickups", 0))
         self.capacity = float(self.mask_cfg.get("capacity", 999))
+        self._capacity_int = int(self.capacity)
         self.pantry_cap = float(self.mask_cfg.get("pantry_cap", 1e9))
+        self._pantry_cap_int = int(self.pantry_cap)
         self.allow_steal = bool(self.mask_cfg.get("allow_steal", True))
         self.can_flip = bool(self.mask_cfg.get("can_flip", True))
         self.nest_blue = int(self.mask_cfg.get("nest_blue", -1))
         self.nest_cap = float(self.mask_cfg.get("nest_cap_blue", 0.0))
+        self._nest_cap_int = int(self.nest_cap)
+        self.big_neg = float(self.mask_cfg.get("big_neg", BIG_NEG))
+        self.flip_node_all = bool(self.mask_cfg.get("flip_node_all", True))
 
         # Lookup buffers
         pantry_idx = np.asarray(self.mask_cfg.get("pantry_idx", []), dtype=np.int64)
@@ -73,6 +96,12 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
         self.register_buffer("pickup_idx", th.as_tensor(pickup_idx, dtype=th.long))
         self.register_buffer("pantry_nodes", th.as_tensor(pantry_nodes, dtype=th.long))
         self.register_buffer("pickup_nodes", th.as_tensor(pickup_nodes, dtype=th.long))
+
+        self._pantry_idx_cpu = self.pantry_idx.detach().cpu()
+        self._pickup_idx_cpu = self.pickup_idx.detach().cpu()
+        self._pantry_nodes_cpu = self.pantry_nodes.detach().cpu()
+        self._pickup_nodes_cpu = self.pickup_nodes.detach().cpu()
+        self._mask_ext = _load_mask_ext()
 
         # Observation slices mirror EurobotDiscreteEnv._obs layout.
         i = 0
@@ -127,199 +156,73 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
             nest_blue=nest_blue,
         )
 
-    def _nest_capacity_left(self, ctx: MaskContext) -> th.Tensor:
-        if self.nest_blue < 0 or self.nest_cap <= 0:
-            return th.zeros_like(ctx.nest_blue)
-        cap = th.as_tensor(self.nest_cap, device=ctx.nest_blue.device, dtype=ctx.nest_blue.dtype)
-        return (cap - ctx.nest_blue).clamp_min(0)
+    def _context_to_cpu(self, ctx: MaskContext) -> MaskContext:
+        return MaskContext(
+            blue_node=ctx.blue_node.detach().to("cpu", non_blocking=False).contiguous(),
+            inv_b=ctx.inv_b.detach().to("cpu", non_blocking=False).contiguous(),
+            inv_sum=ctx.inv_sum.detach().to("cpu", non_blocking=False).contiguous(),
+            cap_left=ctx.cap_left.detach().to("cpu", non_blocking=False).contiguous(),
+            pan=ctx.pan.detach().to("cpu", non_blocking=False).contiguous(),
+            pick=ctx.pick.detach().to("cpu", non_blocking=False).contiguous(),
+            pan_room=ctx.pan_room.detach().to("cpu", non_blocking=False).contiguous(),
+            pan_sum=ctx.pan_sum.detach().to("cpu", non_blocking=False).contiguous(),
+            pick_sum=ctx.pick_sum.detach().to("cpu", non_blocking=False).contiguous(),
+            nest_blue=ctx.nest_blue.detach().to("cpu", non_blocking=False).contiguous(),
+        )
 
-    def _mask_verb(self, ctx: MaskContext) -> th.Tensor:
-        B = ctx.blue_node.size(0)
-        device = ctx.blue_node.device
-        mask = th.zeros((B, self.n_verbs), dtype=th.bool, device=device)
-
-        if Verb.PICK < self.n_verbs:
-            has_pick = ((ctx.pick_sum > 0) & (ctx.cap_left.view(B, 1) > 0)).any(dim=1)
-            mask[:, Verb.PICK] = has_pick
-
-        if Verb.PLACE < self.n_verbs:
-            has_inventory = ctx.inv_sum > 0
-            pantry_room_any = (ctx.pan_room > 0).any(dim=1)
-            nest_room = self._nest_capacity_left(ctx) > 0
-            mask[:, Verb.PLACE] = has_inventory & (pantry_room_any | nest_room)
-
-        if Verb.FLIP < self.n_verbs and self.can_flip:
-            has_source = (ctx.inv_sum > 0) & ((ctx.inv_sum.unsqueeze(1) - ctx.inv_b) > 0).any(dim=1)
-            mask[:, Verb.FLIP] = has_source
-
-        if Verb.STEAL < self.n_verbs and self.allow_steal:
-            opp_stock = ctx.pan[:, :, COLOR_YELLOW] if ctx.pan.numel() > 0 else th.zeros((B, 0), device=device)
-            has_steal = (opp_stock > 0).any(dim=1) & (ctx.cap_left > 0)
-            mask[:, Verb.STEAL] = has_steal
-
-        dead = (~mask).all(dim=1)
-        if bool(dead.any()):
-            raise RuntimeError("MaskedMultiCatPolicy: no valid verbs available for at least one batch element.")
-
-        return mask
-
-    def _mask_node(self, ctx: MaskContext, verb: th.Tensor) -> th.Tensor:
-        B = verb.size(0)
-        device = verb.device
-        mask = th.zeros((B, self.n_nodes), dtype=th.bool, device=device)
-        current_node = ctx.blue_node
-
-        pick_mask = verb == Verb.PICK
-        if pick_mask.any():
-            submask = mask[pick_mask]
-            valid = (ctx.pick_sum > 0)
-            submask[:, self.pickup_nodes] = valid[pick_mask]
-            mask[pick_mask] = submask
-
-        place_mask = verb == Verb.PLACE
-        if place_mask.any():
-            submask = mask[place_mask]
-            room = (ctx.pan_room > 0)
-            submask[:, self.pantry_nodes] |= room[place_mask]
-            if self.nest_blue >= 0:
-                nest_room = self._nest_capacity_left(ctx) > 0
-                submask[:, self.nest_blue] |= (nest_room)[place_mask]
-            mask[place_mask] = submask
-
-        flip_mask = verb == Verb.FLIP
-        if flip_mask.any():
-            mask[flip_mask, current_node[flip_mask]] = True
-
-        steal_mask = verb == Verb.STEAL
-        if steal_mask.any():
-            submask = mask[steal_mask]
-            opp_stock = ctx.pan[:, :, COLOR_YELLOW] 
-            submask[:, self.pantry_nodes] |= (opp_stock > 0)[steal_mask]
-            mask[steal_mask] = submask
-
-        empty = (~mask).all(dim=1)
-        if bool(empty.any()):
-            raise RuntimeError("MaskedMultiCatPolicy: verb allowed but no valid target nodes.")
-
-        return mask
-
-    def _mask_color(self, ctx: MaskContext, verb: th.Tensor, node: th.Tensor) -> th.Tensor:
-        B = verb.size(0)
-        device = verb.device
-        mask = th.zeros((B, self.n_colors), dtype=th.bool, device=device)
-
-        pantry_local = self.pantry_idx[node] 
-
-        pick_mask = verb == Verb.PICK
-        if pick_mask.any():
-            local = self.pickup_idx[node[pick_mask]]
-            stocks = ctx.pick[pick_mask, :, :].gather(
-                1, local.unsqueeze(1).unsqueeze(2).expand(-1, 1, self.n_colors)
-            ).squeeze(1)
-            mask[pick_mask] = (stocks > 0)
-
-        place_mask = verb == Verb.PLACE
-        if place_mask.any():
-            pantry_rows = place_mask & (pantry_local >= 0) 
-            if pantry_rows.any():
-                local = pantry_local[pantry_rows]
-                inv = ctx.inv_b[pantry_rows]             
-                mask[pantry_rows] = (inv > 0)
-            nest_rows = place_mask & (node == self.nest_blue)
-            if nest_rows.any():    
-                inv = ctx.inv_b[nest_rows]                 
-                mask[nest_rows] |= (inv > 0)
-
-        flip_mask = verb == Verb.FLIP
-        if flip_mask.any():
-            inv_sum = ctx.inv_sum.view(B, 1)
-            mask[flip_mask] = (inv_sum - ctx.inv_b)[flip_mask] > 0
-
-        steal_mask = verb == Verb.STEAL
-        if steal_mask.any():
-            local = pantry_local[steal_mask]  
-            stocks = ctx.pan[steal_mask, :, :].gather(
-                1, local.unsqueeze(1).unsqueeze(2).expand(-1, 1, self.n_colors)
-            ).squeeze(1)                
-            mask[steal_mask] = (stocks > 0)    
-
-        empty = (~mask).all(dim=1)
-        if bool(empty.any()):
-            raise RuntimeError("MaskedMultiCatPolicy: verb/node combination has no valid colors.")
-
-        return mask
-
-    def _mask_qty(self, ctx: MaskContext, verb: th.Tensor, node: th.Tensor, color: th.Tensor) -> th.Tensor:
-        B = verb.size(0)
-        device = verb.device
-        mask = th.zeros((B, self.max_qtyp1), dtype=th.bool, device=device)
-        idx = th.arange(self.max_qtyp1, device=device).view(1, -1)
-
-        pickup_local = self.pickup_idx[node]
-        pantry_local = self.pantry_idx[node] 
-
-        pick_mask = (verb == Verb.PICK)
-        if pick_mask.any():
-            local = pickup_local[pick_mask]  
-            stocks_at_node = ctx.pick[pick_mask, :, :].gather(
-                1, local.unsqueeze(1).unsqueeze(2).expand(-1, 1, self.n_colors)
-            ).squeeze(1)
-            stock_color = stocks_at_node[th.arange(stocks_at_node.size(0), device=device), color[pick_mask]]
-            cap = ctx.cap_left[pick_mask]
-            limit = th.minimum(stock_color, cap).clamp_(min=0, max=self.max_qtyp1 - 1)
-            mask_vals = (idx >= 1) & (idx <= limit.unsqueeze(1))
-            mask[pick_mask] = mask_vals
-
-        place_mask = verb == Verb.PLACE
-        if place_mask.any():
-            valid_pantry = place_mask & (pantry_local >= 0)
-            if valid_pantry.any():
-                local = pantry_local[valid_pantry]
-                room = ctx.pan_room[valid_pantry, :].gather(1, local.unsqueeze(1)).squeeze(1)
-                inv = ctx.inv_b[valid_pantry, color[valid_pantry]]
-                limit = th.minimum(room, inv).clamp(min=0, max=self.max_qtyp1 - 1)
-                mask_vals = (idx >= 1) & (idx <= limit.unsqueeze(1))
-                mask[valid_pantry] = mask_vals
-            valid_nest = place_mask & (node == self.nest_blue)
-            if valid_nest.any():
-                inv_rows = ctx.inv_b[valid_nest]
-                selected = color[valid_nest].unsqueeze(1)
-                inv = inv_rows.gather(1, selected).squeeze(1)
-                nest_cap_left = self._nest_capacity_left(ctx)[valid_nest]
-                limit = th.minimum(inv, nest_cap_left).clamp(min=0, max=self.max_qtyp1 - 1)
-                mask_vals = (idx >= 1) & (idx <= limit.unsqueeze(1))
-                mask[valid_nest] = mask_vals
-
-        flip_mask = verb == Verb.FLIP
-        if flip_mask.any():
-            other_color = 1 - color[flip_mask]
-            inv_other = ctx.inv_b[flip_mask, other_color]
-            limit = inv_other.clamp(min=0, max=self.max_qtyp1 - 1)
-            mask_vals = (idx >= 1) & (idx <= limit.unsqueeze(1))
-            mask[flip_mask] = mask_vals
-
-        steal_mask = verb == Verb.STEAL
-        if steal_mask.any():
-            local = pantry_local[steal_mask]
-            stocks = ctx.pan[steal_mask, :, :].gather(1, local.unsqueeze(1).unsqueeze(2).expand(-1, 1, self.n_colors)).squeeze(1)
-            stock_color = stocks[th.arange(stocks.size(0), device=device), color[steal_mask]]
-            max_stock = stock_color
-            cap = ctx.cap_left[steal_mask]
-            limit = th.minimum(max_stock, cap).clamp(min=0, max=self.max_qtyp1 - 1)
-            mask_vals = (idx >= 1) & (idx <= limit.unsqueeze(1))
-            mask[steal_mask] = mask_vals
-
-        empty = (~mask).all(dim=1)
-        if bool(empty.any()):
-            raise RuntimeError("MaskedMultiCatPolicy: no valid quantities for selected verb/node/color.")
-
-        return mask
+    def _mask_ext_call(
+        self,
+        ctx_cpu: MaskContext,
+        verb_logits_cpu: th.Tensor,
+        node_logits_cpu: th.Tensor,
+        color_logits_cpu: th.Tensor,
+        qty_logits_cpu: th.Tensor,
+        verb_sel_cpu: Optional[th.Tensor] = None,
+        node_sel_cpu: Optional[th.Tensor] = None,
+        color_sel_cpu: Optional[th.Tensor] = None,
+    ) -> Tuple[th.Tensor, th.Tensor, th.Tensor, th.Tensor]:
+        verb_mask, node_mask, color_mask, qty_mask, *_ = self._mask_ext.build_masks_and_apply_logits(
+            verb_logits_cpu,
+            node_logits_cpu,
+            color_logits_cpu,
+            qty_logits_cpu,
+            ctx_cpu.blue_node,
+            ctx_cpu.inv_b,
+            ctx_cpu.inv_sum,
+            ctx_cpu.cap_left,
+            ctx_cpu.pan,
+            ctx_cpu.pick,
+            ctx_cpu.pan_room,
+            ctx_cpu.pan_sum,
+            ctx_cpu.pick_sum,
+            ctx_cpu.nest_blue,
+            self._pantry_idx_cpu,
+            self._pickup_idx_cpu,
+            self._pantry_nodes_cpu,
+            self._pickup_nodes_cpu,
+            self.n_verbs,
+            self.n_nodes,
+            self.n_colors,
+            self.max_qtyp1,
+            self._capacity_int,
+            self._pantry_cap_int,
+            self._nest_cap_int,
+            self.nest_blue,
+            self.allow_steal,
+            self.can_flip,
+            self.big_neg,
+            False,
+            self.flip_node_all,
+            verb_sel_cpu,
+            node_sel_cpu,
+            color_sel_cpu,
+        )
+        return verb_mask, node_mask, color_mask, qty_mask
 
     # ---- masking utilities ----------------------------------------------
-    @staticmethod
-    def _apply_mask(logits: th.Tensor, mask: th.Tensor) -> th.Tensor:
+    def _apply_mask(self, logits: th.Tensor, mask: th.Tensor) -> th.Tensor:
         mask = mask.bool()
-        masked = th.where(mask, logits, th.full_like(logits, BIG_NEG))
+        masked = th.where(mask, logits, th.full_like(logits, self.big_neg))
         dead = (~mask).all(dim=1, keepdim=True)
         if dead.any():
             masked = masked.clone()
@@ -357,20 +260,46 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
     def _sample_actions(self, obs: th.Tensor, latent_pi: th.Tensor, deterministic: bool = False):
         verb_logits, node_logits, color_logits, qty_logits = self._split_logits(latent_pi)
         ctx = self._build_context(obs)
-
-        verb_mask = self._mask_verb(ctx)
-        verb, logp_verb, ent_verb = self._sample_head(verb_logits, verb_mask, deterministic)
+        ctx_cpu = self._context_to_cpu(ctx)
 
         B = obs.size(0)
         device = obs.device
+
+        verb_logits_cpu = verb_logits.detach().to("cpu", non_blocking=False).contiguous()
+        node_logits_cpu = node_logits.detach().to("cpu", non_blocking=False).contiguous()
+        color_logits_cpu = color_logits.detach().to("cpu", non_blocking=False).contiguous()
+        qty_logits_cpu = qty_logits.detach().to("cpu", non_blocking=False).contiguous()
+
+        verb_mask_cpu, _, _, _ = self._mask_ext_call(
+            ctx_cpu,
+            verb_logits_cpu,
+            node_logits_cpu,
+            color_logits_cpu,
+            qty_logits_cpu,
+        )
+        verb_mask = verb_mask_cpu.to(device=device)
+        verb, logp_verb, ent_verb = self._sample_head(verb_logits, verb_mask, deterministic)
 
         node = ctx.blue_node.clone()
         logp_node = th.zeros(B, device=device)
         ent_node = th.zeros(B, device=device)
         node_required = (verb == Verb.PICK) | (verb == Verb.PLACE) | (verb == Verb.STEAL)
         if node_required.any():
-            node_mask = self._mask_node(ctx, verb)
-            sel_node, lp_node, en_node = self._sample_head(node_logits[node_required], node_mask[node_required], deterministic)
+            verb_sel = verb.clone()
+            verb_sel[~node_required] = -1
+            verb_sel_cpu = verb_sel.to(th.long).to("cpu", non_blocking=False).contiguous()
+            _, node_mask_cpu, _, _ = self._mask_ext_call(
+                ctx_cpu,
+                verb_logits_cpu,
+                node_logits_cpu,
+                color_logits_cpu,
+                qty_logits_cpu,
+                verb_sel_cpu=verb_sel_cpu,
+            )
+            node_mask = node_mask_cpu.to(device=device)
+            sel_node, lp_node, en_node = self._sample_head(
+                node_logits[node_required], node_mask[node_required], deterministic
+            )
             node[node_required] = sel_node
             logp_node[node_required] = lp_node
             ent_node[node_required] = en_node
@@ -380,8 +309,25 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
         ent_color = th.zeros(B, device=device)
         color_required = (verb == Verb.PICK) | (verb == Verb.PLACE) | (verb == Verb.FLIP) | (verb == Verb.STEAL)
         if color_required.any():
-            color_mask = self._mask_color(ctx, verb, node)
-            sel_color, lp_color, en_color = self._sample_head(color_logits[color_required], color_mask[color_required], deterministic)
+            verb_sel = verb.clone()
+            verb_sel[~color_required] = -1
+            node_sel = node.clone()
+            node_sel[~color_required] = -1
+            verb_sel_cpu = verb_sel.to(th.long).to("cpu", non_blocking=False).contiguous()
+            node_sel_cpu = node_sel.to(th.long).to("cpu", non_blocking=False).contiguous()
+            _, _, color_mask_cpu, _ = self._mask_ext_call(
+                ctx_cpu,
+                verb_logits_cpu,
+                node_logits_cpu,
+                color_logits_cpu,
+                qty_logits_cpu,
+                verb_sel_cpu=verb_sel_cpu,
+                node_sel_cpu=node_sel_cpu,
+            )
+            color_mask = color_mask_cpu.to(device=device)
+            sel_color, lp_color, en_color = self._sample_head(
+                color_logits[color_required], color_mask[color_required], deterministic
+            )
             color[color_required] = sel_color
             logp_color[color_required] = lp_color
             ent_color[color_required] = en_color
@@ -391,8 +337,29 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
         ent_qty = th.zeros(B, device=device)
         qty_required = (verb == Verb.PICK) | (verb == Verb.PLACE) | (verb == Verb.FLIP) | (verb == Verb.STEAL)
         if qty_required.any():
-            qty_mask = self._mask_qty(ctx, verb, node, color)
-            sel_qty, lp_qty, en_qty = self._sample_head(qty_logits[qty_required], qty_mask[qty_required], deterministic)
+            verb_sel = verb.clone()
+            verb_sel[~qty_required] = -1
+            node_sel = node.clone()
+            node_sel[~qty_required] = -1
+            color_sel = color.clone()
+            color_sel[~qty_required] = -1
+            verb_sel_cpu = verb_sel.to(th.long).to("cpu", non_blocking=False).contiguous()
+            node_sel_cpu = node_sel.to(th.long).to("cpu", non_blocking=False).contiguous()
+            color_sel_cpu = color_sel.to(th.long).to("cpu", non_blocking=False).contiguous()
+            _, _, _, qty_mask_cpu = self._mask_ext_call(
+                ctx_cpu,
+                verb_logits_cpu,
+                node_logits_cpu,
+                color_logits_cpu,
+                qty_logits_cpu,
+                verb_sel_cpu=verb_sel_cpu,
+                node_sel_cpu=node_sel_cpu,
+                color_sel_cpu=color_sel_cpu,
+            )
+            qty_mask = qty_mask_cpu.to(device=device)
+            sel_qty, lp_qty, en_qty = self._sample_head(
+                qty_logits[qty_required], qty_mask[qty_required], deterministic
+            )
             qty[qty_required] = sel_qty
             logp_qty[qty_required] = lp_qty
             ent_qty[qty_required] = en_qty
@@ -405,6 +372,7 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
     def _evaluate(self, obs: th.Tensor, latent_pi: th.Tensor, actions: th.Tensor):
         verb_logits, node_logits, color_logits, qty_logits = self._split_logits(latent_pi)
         ctx = self._build_context(obs)
+        ctx_cpu = self._context_to_cpu(ctx)
 
         verb = actions[:, 0].long()
         node = actions[:, 1].long()
@@ -414,7 +382,27 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
         device = obs.device
         B = obs.size(0)
 
-        verb_mask = self._mask_verb(ctx)
+        verb_logits_cpu = verb_logits.detach().to("cpu", non_blocking=False).contiguous()
+        node_logits_cpu = node_logits.detach().to("cpu", non_blocking=False).contiguous()
+        color_logits_cpu = color_logits.detach().to("cpu", non_blocking=False).contiguous()
+        qty_logits_cpu = qty_logits.detach().to("cpu", non_blocking=False).contiguous()
+
+        verb_sel_cpu = verb.detach().to("cpu", non_blocking=False).contiguous()
+        node_sel_cpu = node.detach().to("cpu", non_blocking=False).contiguous()
+        color_sel_cpu = color.detach().to("cpu", non_blocking=False).contiguous()
+
+        verb_mask_cpu, node_mask_cpu, color_mask_cpu, qty_mask_cpu = self._mask_ext_call(
+            ctx_cpu,
+            verb_logits_cpu,
+            node_logits_cpu,
+            color_logits_cpu,
+            qty_logits_cpu,
+            verb_sel_cpu=verb_sel_cpu,
+            node_sel_cpu=node_sel_cpu,
+            color_sel_cpu=color_sel_cpu,
+        )
+
+        verb_mask = verb_mask_cpu.to(device=device)
         masked_verb = self._apply_mask(verb_logits, verb_mask)
         verb_dist = Categorical(logits=masked_verb)
         logp_verb = verb_dist.log_prob(verb)
@@ -424,7 +412,7 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
         ent_node = th.zeros(B, device=device)
         node_required = (verb == Verb.PICK) | (verb == Verb.PLACE) | (verb == Verb.STEAL)
         if node_required.any():
-            node_mask = self._mask_node(ctx, verb)
+            node_mask = node_mask_cpu.to(device=device)
             masked = self._apply_mask(node_logits[node_required], node_mask[node_required])
             dist = Categorical(logits=masked)
             logp_node[node_required] = dist.log_prob(node[node_required])
@@ -434,7 +422,7 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
         ent_color = th.zeros(B, device=device)
         color_required = (verb == Verb.PICK) | (verb == Verb.PLACE) | (verb == Verb.FLIP) | (verb == Verb.STEAL)
         if color_required.any():
-            color_mask = self._mask_color(ctx, verb, node)
+            color_mask = color_mask_cpu.to(device=device)
             masked = self._apply_mask(color_logits[color_required], color_mask[color_required])
             dist = Categorical(logits=masked)
             logp_color[color_required] = dist.log_prob(color[color_required])
@@ -444,7 +432,7 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
         ent_qty = th.zeros(B, device=device)
         qty_required = (verb == Verb.PICK) | (verb == Verb.PLACE) | (verb == Verb.FLIP) | (verb == Verb.STEAL)
         if qty_required.any():
-            qty_mask = self._mask_qty(ctx, verb, node, color)
+            qty_mask = qty_mask_cpu.to(device=device)
             masked = self._apply_mask(qty_logits[qty_required], qty_mask[qty_required])
             dist = Categorical(logits=masked)
             logp_qty[qty_required] = dist.log_prob(qty[qty_required])
