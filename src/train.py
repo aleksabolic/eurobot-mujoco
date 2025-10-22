@@ -173,8 +173,8 @@ if __name__ == "__main__":
     save_ckpt_path.parent.mkdir(parents=True, exist_ok=True)
     save_vecnorm_path.parent.mkdir(parents=True, exist_ok=True)
 
-    robot_cfg_src = Path(__file__).resolve().parent.parent / "robot_configs"
-    robot_cfg_dst = save_dir / "robot_configs"
+    robot_cfg_src = Path(__file__).resolve().parent.parent / "configs"
+    robot_cfg_dst = save_dir / "configs"
     if robot_cfg_src.exists():
         robot_cfg_dst.mkdir(parents=True, exist_ok=True)
         for cfg_file in robot_cfg_src.iterdir():

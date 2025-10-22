@@ -17,10 +17,10 @@ class EurobotDiscreteEnv(gym.Env):
     def __init__(self, seed: Optional[int]=None):
         super().__init__()
    
-        blue_config_dir = "robot_configs/blue_robot.yaml"
-        yellow_config_dir = "robot_configs/yellow_robot.yaml"
+        blue_config_path = "configs/blue_robot.yaml"
+        yellow_config_path = "configs/yellow_robot.yaml"
 
-        self.world = EurobotWorld(blue_config_dir, yellow_config_dir, seed=seed)
+        self.world = EurobotWorld(blue_config_path, yellow_config_path, seed=seed)
 
         self.n_nodes = len(self.world.nodes)
         self.max_qty = int(self.world.blue.profile.max_action_qty)  # assumed same for obs space shape

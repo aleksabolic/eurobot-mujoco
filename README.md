@@ -40,7 +40,7 @@ python src/train_alphazero.py \
 The script launches self-play with MCTS-guided planning. Adjust `--device`, `--learning-rate`, or `--checkpoint-dir` to tune performance and persistence.
 
 ## Robot Configuration
-Robot motion/handling profiles and opponent heuristics live in `robot_configs/blue_robot.yaml` and `robot_configs/yellow_robot.yaml`.
+Robot motion/handling profiles and opponent heuristics live in `configs/blue_robot.yaml` and `configs/yellow_robot.yaml`.
 
 ## Project Layout
 - `src/eurobot_env.py` – Gymnasium wrapper around the Eurobot world with discrete actions.
@@ -50,7 +50,7 @@ Robot motion/handling profiles and opponent heuristics live in `robot_configs/bl
 - `src/alphazero/` – AlphaZero components (action helper, neural net, MCTS, trainer).
 - `src/train_alphazero.py` – Command-line entrypoint for AlphaZero self-play training.
 - `assets/` – Arena layout and geometry assets used by the simulator.
-- `robot_configs/` – Editable robot capability/policy presets.
+- `configs/` – Editable robot capability/policy presets.
 - `tests/` – PyTest suite covering world mechanics edge cases.
 
 Run `pytest` from the repo root to validate environment dynamics after changing core logic or configs.

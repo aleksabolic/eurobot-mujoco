@@ -22,8 +22,8 @@ def _drain_events(world: EurobotWorld, max_steps: int = 12) -> float:
 
 
 def _make_world(*, blue_override=None, rewards=None, seed=123) -> EurobotWorld:
-    blue_prof, blue_policy = load_robot_config("robot_configs/blue_robot.yaml")
-    yellow_prof, yellow_policy = load_robot_config("robot_configs/yellow_robot.yaml")
+    blue_prof, blue_policy = load_robot_config("configs/blue_robot.yaml")
+    yellow_prof, yellow_policy = load_robot_config("configs/yellow_robot.yaml")
     if blue_override:
         blue_prof = replace(blue_prof, **blue_override)
     world = EurobotWorld(

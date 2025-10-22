@@ -79,8 +79,8 @@ class EurobotWorld:
     Discrete, event-driven eurobot world.
     """
     def __init__(self,
-                 blue_config_dir: str,
-                 yellow_config_dir: str,
+                 blue_config_path: str,
+                 yellow_config_path: str,
                  seed: Optional[int]=None,
                  rewards: RewardConfig = DEFAULT_REWARD_CONFIG,
                  allow_steal = True,
@@ -96,8 +96,8 @@ class EurobotWorld:
         self.rewards = rewards
 
         # TODO: Add default values
-        blue_prof, blue_pol = load_robot_config(blue_config_dir) 
-        yellow_prof, yellow_pol = load_robot_config(yellow_config_dir)
+        blue_prof, blue_pol = load_robot_config(blue_config_path) 
+        yellow_prof, yellow_pol = load_robot_config(yellow_config_path)
 
         self.blue = RobotState(
             tag="blue",
