@@ -84,13 +84,15 @@ class EurobotWorld:
                  seed: Optional[int]=None,
                  rewards: RewardConfig = DEFAULT_REWARD_CONFIG,
                  allow_steal = True,
-                 device: str = 'cpu'):
+                 device: str = 'cpu',
+                 record_history: bool = False):
         
         self.rng = np.random.default_rng(seed)
         self.nodes = NODES
         self.N = len(NODES)
         self.D = D
         self.device = device
+        self.record_history = record_history
 
         # TODO: Move rewards to .json or .yaml
         self.rewards = rewards
@@ -103,13 +105,13 @@ class EurobotWorld:
             tag="blue",
             profile=blue_prof,
             node=NEST_BLUE, 
-            inv=np.zeros(NUM_COLORS, dtype=np.int8),
+            inv=np.zeros(NUM_COLORS, dtype=np.int16),
         )
         self.yellow = RobotState(
             tag="yellow",
             profile=yellow_prof,
             node=NEST_YELL, 
-            inv=np.zeros(NUM_COLORS, dtype=np.int8),
+            inv=np.zeros(NUM_COLORS, dtype=np.int16),
         )
 
         # TODO: Move yellow policy to RobotState
@@ -137,8 +139,8 @@ class EurobotWorld:
         if seed is not None: self.rng = np.random.default_rng(seed)
         self.t_left = float(TIME_LIMIT_S)
 
-        self.pantries = np.zeros((len(PANTRIES), NUM_COLORS), dtype=np.int8)
-        self.pickups  = np.zeros((len(PICKUPS),  NUM_COLORS), dtype=np.int8)
+        self.pantries = np.zeros((len(PANTRIES), NUM_COLORS), dtype=np.int16)
+        self.pickups  = np.zeros((len(PICKUPS),  NUM_COLORS), dtype=np.int16)
         self.nest_blue = 0
         self.nest_yellow = 0
 
@@ -211,7 +213,7 @@ class EurobotWorld:
         self._schedule(self.yellow, a)
 
     # ----- advancing -----
-    def _advance_until_next(self) -> Tuple[float, float]:
+    def _advance_until_next(self):
         tb = self.blue.event[0]   if self.blue.event   is not None else np.inf
         ty = self.yellow.event[0] if self.yellow.event is not None else np.inf
         dt = float(min(tb, ty))
@@ -423,7 +425,8 @@ class EurobotWorld:
         return float(blue_score), float(yellow_score)
     
     def _snap(self, tag: str, **extra):
-        return # slows down learning
+        if not self.record_history:
+            return 
         blue_score, yellow_score = self.final_scores()
         snap = dict(
             tag=tag,
@@ -482,6 +485,8 @@ class EurobotWorld:
             rng_state=self.rng.bit_generator.state,
         )
 
+    # todo: remove pantry cap and allow steal from world and move them as constants
+    # also remove history
     def set_state(self, state: Dict[str, Any]) -> None:
         """Restore world state obtained from :meth:`get_state`."""
         self.t_left = float(state["t_left"])
