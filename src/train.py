@@ -131,7 +131,7 @@ def eval_policy(model, episodes: int = 3, max_steps: int = 1000):
         steps = 0
         while not done and steps < max_steps:
             a, _ = model.predict(o, deterministic=True)
-            o, r, term, trunc, info = env.step(a)
+            o, r, term, trunc, _ = env.step(a)
             Rb += float(r)
             done = bool(term) or bool(trunc)
             steps += 1

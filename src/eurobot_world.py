@@ -83,12 +83,14 @@ class EurobotWorld:
                  yellow_config_dir: str,
                  seed: Optional[int]=None,
                  rewards: RewardConfig = DEFAULT_REWARD_CONFIG,
-                 allow_steal = True):
+                 allow_steal = True,
+                 device: str = 'cpu'):
         
         self.rng = np.random.default_rng(seed)
         self.nodes = NODES
         self.N = len(NODES)
         self.D = D
+        self.device = device
 
         # TODO: Move rewards to .json or .yaml
         self.rewards = rewards
