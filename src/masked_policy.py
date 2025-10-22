@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional, Tuple
 
+import os, sys
 import numpy as np
 import torch as th
 from torch.distributions import Categorical
@@ -19,18 +20,15 @@ COLOR_YELLOW = 1
 
 _MASK_EXT = None
 
-
 def _load_mask_ext():
     global _MASK_EXT
     if _MASK_EXT is None:
         src_path = Path(__file__).resolve().with_name("mask_ext.cpp")
-        _MASK_EXT = load(
-            name="mask_ext",
-            sources=[str(src_path)],
-            extra_cflags=["-O3", "-fopenmp"],
-            extra_ldflags=["-fopenmp"],
-            verbose=False,
-        )
+        is_win = os.name == "nt"
+        cflags = ["/O2","/openmp"] if is_win else ["-O3","-fopenmp"]
+        ldflags = [] if is_win else ["-fopenmp"]
+        _MASK_EXT = load(name="mask_ext", sources=[str(src_path)],
+                 extra_cflags=cflags, extra_ldflags=ldflags, verbose=False)
     return _MASK_EXT
 
 
@@ -229,17 +227,23 @@ class MaskedMultiCatPolicy(ActorCriticPolicy):
             fallback = logits.max(dim=1, keepdim=True).values
             masked[dead] = fallback[dead]
         return masked
-
-    def _sample_head(self, logits: th.Tensor, mask: th.Tensor, deterministic: bool) -> Tuple[th.Tensor, th.Tensor, th.Tensor]:
+    
+    def _sample_head(self, logits: th.Tensor, mask: th.Tensor, deterministic):
         masked_logits = self._apply_mask(logits, mask)
-        dist = Categorical(logits=masked_logits)
         if deterministic:
             actions = masked_logits.argmax(dim=1)
-        else:
-            actions = dist.sample()
-        log_prob = dist.log_prob(actions)
-        entropy = dist.entropy()
-        return actions.long(), log_prob, entropy
+            logps = th.log_softmax(masked_logits, dim=1)
+            logp = logps.gather(1, actions[:,None]).squeeze(1)
+            ent = th.zeros_like(logp)  # if you only log entropy elsewhere
+            return actions, logp, ent
+        u = th.rand_like(masked_logits)
+        g = -th.log(-th.log(u.clamp_min(1e-6)))
+        actions = (masked_logits + g).argmax(dim=1)
+        logps = th.log_softmax(masked_logits, dim=1)
+        logp = logps.gather(1, actions[:,None]).squeeze(1)
+        ent = -(logps.exp() * logps).sum(dim=1)
+        return actions, logp, ent
+
 
     # ---- sampling / evaluation -------------------------------------------
     def _latent_pi_vf(self, obs: th.Tensor) -> Tuple[th.Tensor, th.Tensor]:
