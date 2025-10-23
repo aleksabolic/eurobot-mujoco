@@ -424,6 +424,12 @@ class EurobotWorld:
             yellow_score += r.finish_in_nest_bonus
         return float(blue_score), float(yellow_score)
     
+    def final_scores_norm(self) -> Tuple[float, float]:
+        '''returns normalized scores from 0-1'''
+        blue_score, yellow_score = self.final_scores()
+        # TODO: remove hardcode and compute max possible score
+        return blue_score / 160.0, yellow_score / 160.0
+    
     def _snap(self, tag: str, **extra):
         if not self.record_history:
             return 

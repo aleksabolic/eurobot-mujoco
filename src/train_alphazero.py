@@ -13,6 +13,7 @@ from alphazero import AlphaZeroConfig, AlphaZeroNetwork, AlphaZeroTrainer, Eurob
 
 
 def parse_args() -> argparse.Namespace:
+    #TODO: move all these configs to .yaml inside configs/
     parser = argparse.ArgumentParser(description="AlphaZero training for EurobotDiscreteEnv.")
     parser.add_argument("--iterations", type=int, default=10, help="Number of training iterations.")
     parser.add_argument("--games-per-iter", type=int, default=4, help="Self-play games per iteration.")
@@ -36,7 +37,6 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--checkpoint-dir", type=str, help="Directory to write periodic checkpoints.")
     parser.add_argument("--checkpoint-every", type=int, default=1, help="Iterations between checkpoints.")
     parser.add_argument("--save-model", type=str, help="Path to save final network weights.")
-    parser.add_argument("--metrics-json", type=str, help="Optional path to dump training metrics as JSON.")
     return parser.parse_args()
 
 
@@ -51,7 +51,7 @@ def main() -> None:
     obs_dim = int(env.observation_space.shape[0])
     action_dim = EurobotActionHelper(env).size()
 
-    network = AlphaZeroNetwork(obs_dim, action_dim, hidden_sizes=args.hidden_sizes)
+    network = AlphaZeroNetwork(obs_dim, [4,20,2,5], hidden_sizes=args.hidden_sizes)
 
     cfg = AlphaZeroConfig(
         num_iterations=args.iterations,
@@ -76,22 +76,12 @@ def main() -> None:
     )
 
     trainer = AlphaZeroTrainer(env, network, cfg)
-    metrics = trainer.train()
-
-    for entry in metrics:
-        message = ", ".join(f"{k}={v:.4f}" if isinstance(v, float) else f"{k}={v}" for k, v in sorted(entry.items()))
-        print(message)
+    trainer.train()
 
     if args.save_model:
         path = Path(args.save_model)
         path.parent.mkdir(parents=True, exist_ok=True)
         torch.save(trainer.network.state_dict(), path)
-
-    if args.metrics_json:
-        path = Path(args.metrics_json)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8") as fh:
-            json.dump(metrics, fh, indent=2)
 
 
 if __name__ == "__main__":

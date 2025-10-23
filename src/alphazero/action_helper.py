@@ -67,15 +67,49 @@ class EurobotActionHelper:
         assert i <= obs_dim
 
         # Pre-compute action lookup tables.
-        self.actions: List[Tuple[int, int, int, int]] = []
-        for verb in range(self.n_verbs):
-            for node in range(self.n_nodes):
-                for color in range(self.n_colors):
-                    for qty in range(self.max_qty + 1):
-                        self.actions.append((verb, node, color, qty))
+        self.actions: list[tuple[int,int,int,int]] = []
+        self.per_verb_indices: list[list[int]] = []  # flat indices per verb
+
+        flat_idx = 0
+        for v in range(self.n_verbs):
+            verb = Verb(v)
+            if verb == Verb.PICK:
+                nodes = self.pickup_nodes
+            elif verb == Verb.PLACE:
+                nodes = self.pantry_nodes + [self.nest_blue_node]
+            elif verb == Verb.STEAL:
+                nodes = self.pantry_nodes if self.allow_steal else []
+            elif verb == Verb.FLIP:
+                nodes = [0]
+            else:
+                nodes = []
+
+            verb_bucket = []
+            for n in nodes:
+                for c in range(self.n_colors):
+                    for q in range(1, self.max_qty + 1):
+                        self.actions.append((v, n, c, q))
+                        verb_bucket.append(flat_idx)
+                        flat_idx += 1
+            self.per_verb_indices.append(verb_bucket)
+
         self.action_to_index: Dict[Tuple[int, int, int, int], int] = {
             action: idx for idx, action in enumerate(self.actions)
         }
+
+        # component arrays for every flat action index
+        arr = np.array(self.actions, dtype=np.int64)  # [A, 4]
+        self.act_verb  = arr[:, 0]
+        self.act_node  = arr[:, 1]
+        self.act_color = arr[:, 2]
+        self.act_qty   = arr[:, 3]
+
+        # add after self.act_qty = arr[:, 3]
+        self.idx_pick  = np.asarray(self.per_verb_indices[Verb.PICK],  dtype=np.int64)
+        self.idx_place = np.asarray(self.per_verb_indices[Verb.PLACE], dtype=np.int64)
+        self.idx_flip  = np.asarray(self.per_verb_indices[Verb.FLIP],  dtype=np.int64)
+        self.idx_steal = np.asarray(self.per_verb_indices[Verb.STEAL], dtype=np.int64)
+
 
     # ------------------------------------------------------------------ #
     # Encoding helpers
@@ -98,29 +132,17 @@ class EurobotActionHelper:
         inv_sum = float(inv_b.sum())
         cap_left = max(0.0, self.capacity - inv_sum)
 
-        if self.n_pantries > 0:
-            pan_flat = obs[self.sl_pan]
-            pan = pan_flat.reshape(self.n_pantries, self.n_colors).copy()
-            pan_sum = pan.sum(axis=1)
-            pan_room = np.clip(self.pantry_cap - pan_sum, a_min=0.0, a_max=None)
-        else:
-            pan = np.zeros((0, self.n_colors), dtype=np.float32)
-            pan_sum = np.zeros((0,), dtype=np.float32)
-            pan_room = np.zeros((0,), dtype=np.float32)
+        pan_flat = obs[self.sl_pan]
+        pan = pan_flat.reshape(self.n_pantries, self.n_colors).copy()
+        pan_sum = pan.sum(axis=1)
+        pan_room = np.clip(self.pantry_cap - pan_sum, a_min=0.0, a_max=None)
 
-        if self.n_pickups > 0:
-            pick_flat = obs[self.sl_pick]
-            pick = pick_flat.reshape(self.n_pickups, self.n_colors).copy()
-            pick_sum = pick.sum(axis=1)
-        else:
-            pick = np.zeros((0, self.n_colors), dtype=np.float32)
-            pick_sum = np.zeros((0,), dtype=np.float32)
+        pick_flat = obs[self.sl_pick]
+        pick = pick_flat.reshape(self.n_pickups, self.n_colors).copy()
+        pick_sum = pick.sum(axis=1)
 
-        if self.sl_nest.stop > self.sl_nest.start:
-            nest_counts = obs[self.sl_nest]
-            nest_blue = float(nest_counts[0])
-        else:
-            nest_blue = 0.0
+        nest_counts = obs[self.sl_nest]
+        nest_blue = float(nest_counts[0])
 
         nest_room = max(0.0, float(NEST_CAP) - nest_blue)
 
@@ -139,119 +161,82 @@ class EurobotActionHelper:
         )
 
     # ------------------------------------------------------------------ #
-    def _valid_pick(self, ctx: ObservationContext, node: int, color: int, qty: int) -> bool:
-        if qty <= 0 or self.n_pickups == 0:
-            return False
-        if ctx.cap_left <= 0.0:
-            return False
-        local = int(self.pickup_idx[node]) if node < len(self.pickup_idx) else -1
-        if local < 0 or local >= self.n_pickups:
-            return False
-        stock_total = float(ctx.pick_sum[local])
-        if stock_total <= 0.0:
-            return False
-        stock_color = float(ctx.pick[local, color])
-        if stock_color <= 0.0:
-            return False
-        limit = min(stock_color, ctx.cap_left, float(self.max_qty))
-        return 1 <= qty <= int(limit + 1e-6)
-
-    def _valid_place(self, ctx: ObservationContext, node: int, color: int, qty: int) -> bool:
-        if qty <= 0 or ctx.inv_b[color] <= 0.0:
-            return False
-        qty = int(qty)
-
-        if node == self.nest_blue_node:
-            if ctx.nest_room <= 0.0:
-                return False
-            limit = min(ctx.nest_room, ctx.inv_b[color], float(self.max_qty))
-            return 1 <= qty <= int(limit + 1e-6)
-
-        local = int(self.pantry_idx[node]) if node < len(self.pantry_idx) else -1
-        if local < 0 or local >= self.n_pantries:
-            return False
-        room = float(ctx.pan_room[local])
-        if room <= 0.0:
-            return False
-        limit = min(room, ctx.inv_b[color], float(self.max_qty))
-        return 1 <= qty <= int(limit + 1e-6)
-
-    def _valid_flip(self, ctx: ObservationContext, node: int, color: int, qty: int) -> bool:
-        if not self.can_flip or qty <= 0:
-            return False
-        if node != ctx.blue_node:
-            return False
-        other_color = 1 - int(color)
-        stock_other = float(ctx.inv_b[other_color])
-        if stock_other <= 0.0:
-            return False
-        limit = min(stock_other, float(self.max_qty))
-        return 1 <= qty <= int(limit + 1e-6)
-
-    def _valid_steal(self, ctx: ObservationContext, node: int, color: int, qty: int) -> bool:
-        if not self.allow_steal or qty <= 0 or ctx.cap_left <= 0.0:
-            return False
-        local = int(self.pantry_idx[node]) if node < len(self.pantry_idx) else -1
-        if local < 0 or local >= self.n_pantries:
-            return False
-        stock = float(ctx.pan[local, color])
-        if stock <= 0.0:
-            return False
-        limit = min(stock, ctx.cap_left, float(self.max_qty))
-        return 1 <= qty <= int(limit + 1e-6)
-
-    def _valid_verb(self, ctx: ObservationContext, verb: int) -> bool:
-        verb_enum = Verb(int(verb))
-        if verb_enum == Verb.PICK:
-            if self.n_pickups == 0 or ctx.cap_left <= 0.0:
-                return False
-            return bool(np.any(ctx.pick_sum > 0.0))
-        if verb_enum == Verb.PLACE:
-            if ctx.inv_sum <= 0.0:
-                return False
-            pantry_room_any = bool(np.any(ctx.pan_room > 0.0)) if self.n_pantries > 0 else False
-            nest_room = ctx.nest_room > 0.0
-            return pantry_room_any or nest_room
-        if verb_enum == Verb.FLIP:
-            if not self.can_flip:
-                return False
-            other_color_stock = ctx.inv_sum - ctx.inv_b
-            return bool(np.any(other_color_stock > 0.0))
-        if verb_enum == Verb.STEAL:
-            if not self.allow_steal or self.n_pantries == 0 or ctx.cap_left <= 0.0:
-                return False
-            if ctx.pan.shape[0] > 0:
-                steal_col = 1 if ctx.pan.shape[1] > 1 else 0
-                opp_stock = ctx.pan[:, steal_col]
-            else:
-                opp_stock = np.zeros((0,), dtype=np.float32)
-            return bool(np.any(opp_stock > 0.0))
-        return False
-
-    # ------------------------------------------------------------------ #
     def legal_action_mask(self, obs: np.ndarray) -> np.ndarray:
         ctx = self._ctx(obs)
-        mask = np.zeros(len(self.actions), dtype=bool)
+        A = len(self.actions)
+        mask = np.zeros(A, dtype=bool)
 
-        valid_verbs = {verb for verb in range(self.n_verbs) if self._valid_verb(ctx, verb)}
+        # --- PICK ---
+        if self.idx_pick.size:
+            nodes  = self.act_node[self.idx_pick]
+            colors = self.act_color[self.idx_pick]
+            qty    = self.act_qty[self.idx_pick].astype(np.float32)
 
-        for idx, (verb, node, color, qty) in enumerate(self.actions):
-            if verb not in valid_verbs:
-                continue
+            loc      = self.pickup_idx[nodes]
+            stock_t  = ctx.pick_sum[loc]                 # total at pickup
+            stock_c  = ctx.pick[loc, colors]             # chosen color at pickup
+            cap      = ctx.cap_left
+            limit    = np.minimum.reduce([stock_c, np.full_like(stock_c, cap), np.full_like(stock_c, self.max_qty, dtype=np.float32)])
 
-            verb_enum = Verb(int(verb))
-            if verb_enum == Verb.PICK:
-                if self._valid_pick(ctx, node, color, qty):
-                    mask[idx] = True
-            elif verb_enum == Verb.PLACE:
-                if self._valid_place(ctx, node, color, qty):
-                    mask[idx] = True
-            elif verb_enum == Verb.FLIP:
-                if self._valid_flip(ctx, node, color, qty):
-                    mask[idx] = True
-            elif verb_enum == Verb.STEAL:
-                if self._valid_steal(ctx, node, color, qty):
-                    mask[idx] = True
+            valid = (cap > 0.0) & (stock_t > 0.0) & (stock_c > 0.0) & (qty <= limit)
+            mask[self.idx_pick] = valid
+
+        # --- PLACE (pantries + nest) ---
+        if self.idx_place.size:
+            nodes  = self.act_node[self.idx_place]
+            colors = self.act_color[self.idx_place]
+            qty    = self.act_qty[self.idx_place].astype(np.float32)
+
+            inv_c = ctx.inv_b[colors]                    # inventory of chosen color
+
+            # Nest placements
+            to_nest = (nodes == self.nest_blue_node)
+            if np.any(to_nest):
+                limit_n = np.minimum.reduce([
+                    np.full(np.count_nonzero(to_nest), ctx.nest_room, dtype=np.float32),
+                    inv_c[to_nest],
+                    np.full(np.count_nonzero(to_nest), self.max_qty, dtype=np.float32),
+                ])
+                valid_n = (inv_c[to_nest] > 0.0) & (ctx.nest_room > 0.0) & (qty[to_nest] <= limit_n)
+                m = mask[self.idx_place]
+                m[to_nest] = valid_n
+                mask[self.idx_place] = m  # writeback
+
+            # Pantry placements
+            to_pan = ~to_nest
+            if np.any(to_pan):
+                loc      = self.pantry_idx[nodes[to_pan]]
+                room     = ctx.pan_room[loc]
+                limit_p  = np.minimum.reduce([room, inv_c[to_pan], np.full_like(room, self.max_qty, dtype=np.float32)])
+                valid_p  = (inv_c[to_pan] > 0.0) & (room > 0.0) & (qty[to_pan] <= limit_p)
+                m = mask[self.idx_place]
+                m[to_pan] = valid_p
+                mask[self.idx_place] = m
+
+        # --- FLIP ---
+        if self.idx_flip.size and self.can_flip:
+            nodes  = self.act_node[self.idx_flip]
+            colors = self.act_color[self.idx_flip]
+            qty    = self.act_qty[self.idx_flip].astype(np.float32)
+
+            other_c   = 1 - colors
+            stock_o   = ctx.inv_b[other_c]
+            limit_f   = np.minimum(stock_o, np.full_like(stock_o, self.max_qty, dtype=np.float32))
+            valid_f   = (nodes == 0) & (stock_o > 0.0) & (qty <= limit_f)
+            mask[self.idx_flip] = valid_f
+
+        # --- STEAL ---
+        if self.idx_steal.size and self.allow_steal:
+            nodes  = self.act_node[self.idx_steal]
+            colors = self.act_color[self.idx_steal]
+            qty    = self.act_qty[self.idx_steal].astype(np.float32)
+
+            cap    = ctx.cap_left
+            loc    = self.pantry_idx[nodes]
+            stock  = ctx.pan[loc, colors]
+            limit_s = np.minimum.reduce([stock, np.full_like(stock, cap), np.full_like(stock, self.max_qty, dtype=np.float32)])
+            valid_s = (cap > 0.0) & (stock > 0.0) & (qty <= limit_s)
+            mask[self.idx_steal] = valid_s
 
         return mask
 
@@ -259,12 +244,3 @@ class EurobotActionHelper:
         mask = self.legal_action_mask(obs)
         return [idx for idx, is_valid in enumerate(mask) if is_valid]
 
-    def filter_illegal(self, probs: np.ndarray, obs: np.ndarray) -> np.ndarray:
-        """Apply legal action mask to probability vector and renormalize."""
-        probs = np.asarray(probs, dtype=np.float32)
-        mask = self.legal_action_mask(obs)
-        clipped = np.where(mask, probs, 0.0)
-        total = float(clipped.sum())
-        if total <= 0.0:
-            return mask.astype(np.float32) / max(mask.sum(), 1)
-        return clipped / total

@@ -68,6 +68,10 @@ class MCTS:
         return root
 
     def _simulate(self, env, root_obs: np.ndarray, root: TreeNode) -> None:
+        '''
+        Traverse down the tree using (P)UCT and expand the first unexpanded node.
+        Backprop the value back to root.
+        '''
         node = root
         obs = np.array(root_obs, copy=True)
         path = [node]
@@ -78,7 +82,7 @@ class MCTS:
                 break
             action_idx, child = self._select_child(node)
             action = self.helper.decode(action_idx)
-            obs, _, terminated, truncated, _ = env.step(np.asarray(action, dtype=np.int64))
+            obs, _, terminated, truncated, _ = env.step(np.asarray(action, dtype=np.int64)) # da li mi treba ovo??
             path.append(child)
             node = child
             done = bool(terminated) or bool(truncated)
@@ -89,22 +93,44 @@ class MCTS:
         self._backprop(path, value)
 
     def _expand(self, node: TreeNode, obs: np.ndarray, env) -> float:
+        '''
+        Expands current node with all legal actions and assigns prior to all of them
+        using policy network.
+        '''
         mask = self.helper.legal_action_mask(obs)
         if not np.any(mask):
+            print("Ne postoji validna akcija za ovo stanje!")
             node.children = {}
             node.is_expanded = True
             return self._terminal_value(env)
 
         obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
         with torch.no_grad():
-            logits, value = self.network(obs_tensor)
-        logits_np = logits.squeeze(0).detach().cpu().numpy()
-        priors = self._masked_softmax(logits_np, mask)
+            (lv, ln, lc, lq), value = self.network(obs_tensor)  # each [1, dim]
+        lv = lv.squeeze(0).detach().cpu()
+        ln = ln.squeeze(0).detach().cpu()
+        lc = lc.squeeze(0).detach().cpu()
+        lq = lq.squeeze(0).detach().cpu()
+
+        # fast composition: joint_logits[a] = lv[v[a]] + ln[n[a]] + lc[c[a]] + lq[q[a]]
+        verb_idx  = torch.as_tensor(self.helper.act_verb,  dtype=torch.long)
+        node_idx  = torch.as_tensor(self.helper.act_node,  dtype=torch.long)
+        color_idx = torch.as_tensor(self.helper.act_color, dtype=torch.long)
+        qty_idx   = torch.as_tensor(self.helper.act_qty,   dtype=torch.long)
+
+        joint = lv[verb_idx] + ln[node_idx] + lc[color_idx] + lq[qty_idx]  # [A] torch
+        joint_np = joint.numpy()
+
+        # masked softmax over legal actions 
+        priors = self._masked_softmax(joint_np, mask)
         node.children = {idx: TreeNode(prior=float(priors[idx])) for idx, valid in enumerate(mask) if valid}
         node.is_expanded = True
         return float(value.item())
 
     def _select_child(self, node: TreeNode) -> Tuple[int, TreeNode]:
+        '''
+        finds the child of the node with the best (P)UCT score
+        '''
         best_score = -float("inf")
         best_action = None
         best_child = None
@@ -155,6 +181,6 @@ class MCTS:
         return exp_logits / total
 
     def _terminal_value(self, env) -> float:
-        blue_score, _ = env.world.final_scores()
-        return np.tanh(blue_score / 160.0)
+        blue_score, _ = env.world.final_scores_norm()
+        return blue_score
 

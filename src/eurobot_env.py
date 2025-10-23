@@ -25,7 +25,8 @@ class EurobotDiscreteEnv(gym.Env):
         self.n_nodes = len(self.world.nodes)
         self.max_qty = int(self.world.blue.profile.max_action_qty)  # assumed same for obs space shape
         self.num_colors = len(Col)
-
+        
+        # (4,20,2,5)
         self.action_space = spaces.MultiDiscrete([len(Verb), self.n_nodes, self.num_colors, self.max_qty+1])
         # obs = [blue_node_one_hot(n_nodes),
         #        yellow_node_one_hot(n_nodes),

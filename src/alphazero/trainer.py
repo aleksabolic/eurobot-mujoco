@@ -7,6 +7,7 @@ from typing import Dict, List, Optional
 import numpy as np
 import torch
 import torch.nn.functional as F
+from tqdm.auto import trange
 
 from alphazero.action_helper import EurobotActionHelper
 from alphazero.mcts import MCTS, MCTSConfig
@@ -56,6 +57,7 @@ class AlphaZeroTrainer:
         )
         self.mcts = MCTS(self.network, self.helper, mcts_cfg, self.device)
         self.replay = ReplayBuffer(cfg.replay_buffer_size)
+        #TODO: add cosine lr scheduler
         self.optimizer = torch.optim.Adam(
             self.network.parameters(),
             lr=cfg.learning_rate,
@@ -65,75 +67,17 @@ class AlphaZeroTrainer:
         self.obs_dim = obs_dim
 
     # ------------------------------------------------------------------ #
-    def train(self) -> List[Dict[str, float]]:
-        metrics_history: List[Dict[str, float]] = []
-        for iteration in range(1, self.cfg.num_iterations + 1):
-            print(
-                f"[AlphaZero] Iteration {iteration}/{self.cfg.num_iterations}",
-                flush=True,
-            )
-            episode_returns = []
-            for game_idx in range(self.cfg.games_per_iteration):
-                stats = self._play_episode()
-                episode_returns.append(stats)
-                print(
-                    "  Self-play {}/{}: steps={} blue_score={:.1f} yellow_score={:.1f} value={:.3f}".format(
-                        game_idx + 1,
-                        self.cfg.games_per_iteration,
-                        int(stats["steps"]),
-                        stats["blue_score"],
-                        stats["yellow_score"],
-                        stats.get("value", 0.0),
-                    ),
-                    flush=True,
-                )
-            logs = {"iteration": float(iteration)}
-            if episode_returns:
-                mean_score = float(np.mean([s["blue_score"] for s in episode_returns]))
-                logs["episode_blue_score"] = mean_score
-                logs["episode_steps"] = float(np.mean([s["steps"] for s in episode_returns]))
-                logs["episode_yellow_score"] = float(
-                    np.mean([s["yellow_score"] for s in episode_returns])
-                )
-                print(
-                    "  Rollout mean: blue={:.2f} yellow={:.2f} steps={:.1f}".format(
-                        logs["episode_blue_score"],
-                        logs["episode_yellow_score"],
-                        logs["episode_steps"],
-                    ),
-                    flush=True,
-                )
-            train_logs = self._optimize()
-            if train_logs:
-                logs.update(train_logs)
-                print(
-                    "  Optimize: loss={:.4f} policy={:.4f} value={:.4f} entropy={:.4f} buffer={}".format(
-                        train_logs.get("loss", 0.0),
-                        train_logs.get("policy_loss", 0.0),
-                        train_logs.get("value_loss", 0.0),
-                        train_logs.get("entropy", 0.0),
-                        int(train_logs.get("buffer_size", len(self.replay))),
-                    ),
-                    flush=True,
-                )
-            else:
-                logs["buffer_size"] = float(len(self.replay))
-                print(
-                    f"  Optimize: skipped (buffer={len(self.replay)})",
-                    flush=True,
-                )
-            metrics_history.append(logs)
+    def train(self):
+        for iteration in trange(1, self.cfg.num_iterations + 1, desc="AlphaZero", unit="iter"):
+            for _ in range(self.cfg.games_per_iteration):
+                self._play_episode()
+            self._optimize()
             self._maybe_checkpoint(iteration)
-        return metrics_history
 
-    def _optimize(self) -> Dict[str, float]:
-        logs: Dict[str, float] = {}
+    def _optimize(self):
         if len(self.replay) < self.cfg.batch_size:
-            return logs
-        policy_losses = []
-        value_losses = []
-        total_losses = []
-        entropies = []
+            return 
+        
         self.network.train()
         for _ in range(self.cfg.training_steps):
             batch = self.replay.sample(self.cfg.batch_size)
@@ -141,16 +85,28 @@ class AlphaZeroTrainer:
             target_pi = torch.as_tensor(batch.policies, dtype=torch.float32, device=self.device)
             target_value = torch.as_tensor(batch.values, dtype=torch.float32, device=self.device)
 
-            logits, value = self.network(obs)
-            log_probs = torch.log_softmax(logits, dim=1)
-            probs = torch.softmax(logits, dim=1)
+            (logits_v, logits_n, logits_c, logits_q), value = self.network(obs)  # heads
+            # build joint logits for ALL actions in the buffer batch
+            with torch.no_grad():
+                verb_idx  = torch.as_tensor(self.helper.act_verb,  device=self.device, dtype=torch.long)
+                node_idx  = torch.as_tensor(self.helper.act_node,  device=self.device, dtype=torch.long)
+                color_idx = torch.as_tensor(self.helper.act_color, device=self.device, dtype=torch.long)
+                qty_idx   = torch.as_tensor(self.helper.act_qty,   device=self.device, dtype=torch.long)
+
+            # logits_* are [B, dim], we want [B, A] where A=#actions
+            joint_logits = (
+                logits_v[:, verb_idx] +
+                logits_n[:, node_idx] +
+                logits_c[:, color_idx] +
+                logits_q[:, qty_idx]
+            )  # shape [B, A]
+            log_probs = torch.log_softmax(joint_logits, dim=1)
+            probs = torch.softmax(joint_logits, dim=1)
+
             policy_loss = -(target_pi * log_probs).sum(dim=1).mean()
             value_loss = F.mse_loss(value, target_value)
             entropy = -(probs * log_probs).sum(dim=1).mean()
-            loss = (
-                self.cfg.policy_loss_coef * policy_loss
-                + self.cfg.value_loss_coef * value_loss
-            )
+            loss = self.cfg.policy_loss_coef * policy_loss + self.cfg.value_loss_coef * value_loss
 
             self.optimizer.zero_grad()
             loss.backward()
@@ -158,19 +114,7 @@ class AlphaZeroTrainer:
                 torch.nn.utils.clip_grad_norm_(self.network.parameters(), self.cfg.max_grad_norm)
             self.optimizer.step()
 
-            policy_losses.append(float(policy_loss.item()))
-            value_losses.append(float(value_loss.item()))
-            total_losses.append(float(loss.item()))
-            entropies.append(float(entropy.item()))
-
-        logs["policy_loss"] = float(np.mean(policy_losses))
-        logs["value_loss"] = float(np.mean(value_losses))
-        logs["loss"] = float(np.mean(total_losses))
-        logs["entropy"] = float(np.mean(entropies))
-        logs["buffer_size"] = float(len(self.replay))
-        return logs
-
-    def _play_episode(self) -> Dict[str, float]:
+    def _play_episode(self):
         self.network.eval()
         obs, _ = self.env.reset()
         done = False
@@ -202,23 +146,10 @@ class AlphaZeroTrainer:
             step_idx += 1
             done = bool(term) or bool(trunc)
 
-        blue_score, yellow_score = self.env.world.final_scores()
-        value = self._score_to_value(blue_score, yellow_score)
+        blue_score, _ = self.env.world.final_scores_norm()
+        value = blue_score
         for item in episode_data:
             self.replay.add(item["obs"], item["pi"], value)
-
-        return {
-            "steps": float(step_idx),
-            "blue_score": float(blue_score),
-            "yellow_score": float(yellow_score),
-            "value": float(value),
-        }
-
-
-    def _score_to_value(self, blue_score: float, yellow_score: float) -> float:
-        SCORE_SCALE = 160.0
-        return np.tanh(blue_score / SCORE_SCALE)
-
 
     def _sample_action(self, obs: np.ndarray, policy: np.ndarray, temperature: float) -> int:
         policy = np.asarray(policy, dtype=np.float32)
