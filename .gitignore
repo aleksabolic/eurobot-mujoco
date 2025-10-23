@@ -58,3 +58,4 @@ cymj.c
 .pytest_cache/
 tb_logs.zip
 utils/*.gif
+.vscode

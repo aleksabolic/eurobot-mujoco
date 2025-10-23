@@ -1,56 +1,57 @@
-# Eurobot RL 
+# C++ AlphaZero Template
 
-Fast simulator for experimenting with Eurobot match tactics. The repo provides a discrete Gym environment, PPO training loop, scripted opponent policy, and utilities for playback/rendering.
+This directory contains a starter C++ project that mirrors the high-level AlphaZero structure used by the Python prototype. It is configured to build against LibTorch (the official PyTorch C++ API) and provides minimal scaffolding for a policy network, Monte-Carlo Tree Search (MCTS) loop, and a training harness.
 
-![gif](demo.gif)
+## Layout
 
-## Setup
-
-```bash
-python -m venv .venv
-source .venv/bin/activate
-pip install -r requirements.txt
+```
+src/cpp
+├── CMakeLists.txt           # Standalone CMake entry point
+├── include/alphazero        # Public headers
+│   ├── mcts.hpp
+│   ├── policy_network.hpp
+│   └── trainer.hpp
+├── src                      # Library / executable sources
+│   ├── alphazero
+│   │   ├── mcts.cpp
+│   │   ├── policy_network.cpp
+│   │   └── trainer.cpp
+│   └── main.cpp             # Example wiring of the components
+└── README.md
 ```
 
-## Training
-Launch PPO training (Stable-Baselines3) from the repo root:
+The code is intentionally lightweight and focuses on API shape and compilation setup. Replace the stub logic with your production implementation as you port features from Python.
+
+## Prerequisites
+
+- CMake ≥ 3.20
+- A C++20 capable compiler (GCC ≥ 10, Clang ≥ 12, or MSVC ≥ 19.29)
+- LibTorch (download from https://pytorch.org/get-started/locally/) extracted somewhere on disk
+- Optional: CUDA toolkit if you plan to build the CUDA variant of LibTorch
+
+## Configure & Build
+
+Use CMake with the standalone project entry point in this directory. Tell CMake where to find LibTorch via `CMAKE_PREFIX_PATH` (or by setting `Torch_DIR`).
 
 ```bash
-python src/train.py \
---timesteps 100_000_000 \
---ckpt runs/<checkpoint-name>
+cmake -S src/cpp -B build/cpp -DCMAKE_PREFIX_PATH=/path/to/libtorch
+cmake --build build/cpp
 ```
 
-TensorBoard logs are written under `runs/tb/<checkpoint-name>`
+The first command configures the project and generates build files in `build/cpp/`. The second command compiles the static library (`eurobot_alphazero`) and the sample executable (`eurobot_app`).
 
-## Evaluation & Rendering
+### Running the sample
+
 ```bash
-python src/eval.py --model runs/<checkpoint-name>.zip --render --fps 5
+./build/cpp/eurobot_app
 ```
-Add `--render` for live OpenCV playback, adjust `--fps` for slower/faster replays, or `--gif path/to/output.gif` to export animations (requires `imageio`).
 
-## AlphaZero Training
-```bash
-python src/train_alphazero.py \
-  --iterations 20 \
-  --games-per-iter 8 \
-  --num-simulations 128 \
-  --save-model runs/alphazero/latest.pt
-```
-The script launches self-play with MCTS-guided planning. Adjust `--device`, `--learning-rate`, or `--checkpoint-dir` to tune performance and persistence.
+The executable prints dummy metrics and shows how to wire the trainer and search loop together. Replace this with your own entry point once you integrate the Eurobot environment.
 
-## Robot Configuration
-Robot motion/handling profiles and opponent heuristics live in `configs/blue_robot.yaml` and `configs/yellow_robot.yaml`.
+## Next Steps
 
-## Project Layout
-- `src/eurobot_env.py` – Gymnasium wrapper around the Eurobot world with discrete actions.
-- `src/eurobot_world.py` – Core match simulation, scoring, and logistics logic.
-- `src/masked_policy.py` & `src/policies.py` – Custom SB3 policy with action masking and scripted opponent.
-- `src/train.py`, `src/eval.py` – PPO training loop and evaluation utility.
-- `src/alphazero/` – AlphaZero components (action helper, neural net, MCTS, trainer).
-- `src/train_alphazero.py` – Command-line entrypoint for AlphaZero self-play training.
-- `assets/` – Arena layout and geometry assets used by the simulator.
-- `configs/` – Editable robot capability/policy presets.
-- `tests/` – PyTest suite covering world mechanics edge cases.
+- Replace the placeholder logic in `alphazero::MCTS` and `alphazero::AlphaZeroTrainer` with the real algorithms.
+- Port environment interactions from Python one component at a time, exposing them via C++ headers inside `include/`.
+- Add tests (e.g., GoogleTest or Catch2) and hook them into the CMake project once the core code solidifies.
 
-Run `pytest` from the repo root to validate environment dynamics after changing core logic or configs.
+Happy hacking!
