@@ -1,0 +1,283 @@
+#include "alphazero/eurobot_world.hpp"
+#include <algorithm>
+#include <cassert>
+
+namespace eurobot {
+
+static inline float L2(const std::array<float,2>& a, const std::array<float,2>& b) {
+  float dx = a[0]-b[0], dy = a[1]-b[1];
+  return std::sqrt(dx*dx + dy*dy);
+}
+
+std::vector<Node> EurobotWorld::build_nodes(int& nest_blue, int& nest_yellow,
+                                            std::vector<int>& pantries,
+                                            std::vector<int>& pickups) {
+  std::vector<Node> v;
+  // Nests
+  v.push_back(Node{"NestBlue",   { 1.20f,  0.775f}, NodeType::NEST});
+  v.push_back(Node{"NestYellow", {-1.20f,  0.775f}, NodeType::NEST});
+  nest_blue  = 0;
+  nest_yellow= 1;
+
+  // Pantries A..J
+  const std::pair<const char*, std::array<float,2>> PANTRIES_POS[] = {
+    {"PantryA", {-0.25f,  0.45f}}, {"PantryB", { 0.25f,  0.45f}},
+    {"PantryC", {-1.40f, -0.20f}}, {"PantryD", {-0.70f, -0.20f}},
+    {"PantryE", { 0.00f, -0.20f}}, {"PantryF", { 0.70f, -0.20f}},
+    {"PantryG", { 1.40f, -0.20f}}, {"PantryH", {-0.80f, -0.90f}},
+    {"PantryI", { 0.00f, -0.90f}}, {"PantryJ", { 0.80f, -0.90f}},
+  };
+  for (auto&& p : PANTRIES_POS) {
+    v.push_back(Node{p.first, p.second, NodeType::PANTRY});
+    pantries.push_back(static_cast<int>(v.size()-1));
+  }
+
+  // Pickups P1..P8
+  const std::pair<const char*, std::array<float,2>> PICKUPS_POS[] = {
+    {"P1", {-1.325f,  0.20f}}, {"P2", { 1.325f,  0.20f}},
+    {"P3", {-0.35f,  -0.20f}}, {"P4", { 0.35f,  -0.20f}},
+    {"P5", {-1.325f, -0.60f}}, {"P6", { 1.325f, -0.60f}},
+    {"P7", {-0.40f,  -0.825f}},{"P8", { 0.40f,  -0.825f}},
+  };
+  for (auto&& p : PICKUPS_POS) {
+    v.push_back(Node{p.first, p.second, NodeType::PICKUP});
+    pickups.push_back(static_cast<int>(v.size()-1));
+  }
+
+  return v;
+}
+
+std::vector<float> EurobotWorld::build_pairwise_D(const std::vector<Node>& nodes) {
+  const int N = static_cast<int>(nodes.size());
+  std::vector<float> D(N*N, 0.f);
+  for (int i=0;i<N;i++) for (int j=0;j<N;j++) D[i*N + j] = L2(nodes[i].xy, nodes[j].xy);
+  return D;
+}
+
+EurobotWorld::EurobotWorld(Profile blue_prof,
+                           Profile yellow_prof,
+                           RewardConfig rewards,
+                           bool allow_steal,
+                           uint64_t seed,
+                           bool record_history)
+: r_(rewards), record_history_(record_history), allow_steal_(allow_steal), rng_(seed) {
+  nodes_ = build_nodes(NEST_BLUE, NEST_YELL, PANTRIES, PICKUPS);
+  D_     = build_pairwise_D(nodes_);
+  pantry_idx_.assign(N(), -1);
+  pickup_idx_.assign(N(), -1);
+  for (int j=0;j<(int)PANTRIES.size();++j) pantry_idx_[PANTRIES[j]] = j;
+  for (int j=0;j<(int)PICKUPS.size();++j)  pickup_idx_[PICKUPS[j]]  = j;
+
+  blue.tag    = "blue";   blue.profile   = std::move(blue_prof);   blue.node   = NEST_BLUE;
+  yellow.tag  = "yellow"; yellow.profile = std::move(yellow_prof); yellow.node = NEST_YELL;
+  reset(seed);
+}
+
+void EurobotWorld::reset(std::optional<uint64_t> seed) {
+  if (seed) rng_.seed(*seed);
+  t_left_ = TIME_LIMIT_S;
+
+  pantries_.assign(PANTRIES.size(), std::array<int16_t,NUM_COLORS>{0,0});
+  pickups_.assign(PICKUPS.size(),  std::array<int16_t,NUM_COLORS>{0,0});
+  nest_blue_ = 0; nest_yellow_ = 0;
+
+  for (auto& p : pickups_) { p[(int)Col::BLUE]   = 2; p[(int)Col::YELLOW] = 2; }
+
+  blue.inv = {0,0}; yellow.inv = {0,0};
+  blue.event.reset(); yellow.event.reset();
+}
+
+bool EurobotWorld::check_valid_action(int node, int color, int qty, const RobotState& robot) const {
+  if (node < 0 || node >= N()) return false;
+  if (color < 0 || color >= NUM_COLORS) return false;
+  if (qty < 0 || qty > robot.profile.max_action_qty) return false;
+  return true;
+}
+
+void EurobotWorld::schedule(RobotState& rob, const Action& a) {
+  int verb  = a.verb, node = a.node, color = a.color, qty = a.qty;
+  if (!check_valid_action(node, color, qty, rob)) {
+    throw std::runtime_error("Invalid action");
+  }
+
+  float d = (node != rob.node) ? dist(rob.node, node) : 0.f;
+  double t_move = (static_cast<Verb>(verb)==Verb::PICK ||
+                   static_cast<Verb>(verb)==Verb::PLACE||
+                   static_cast<Verb>(verb)==Verb::STEAL) && d>0.f
+                  ? rob.profile.travel_time(d) : 0.0;
+  double t_hand = rob.profile.handle_time(static_cast<Verb>(verb), qty);
+  double t_total = t_move + t_hand;
+
+  bool did_move = (t_move > 0.0);
+  int actor_id  = (rob.tag=="blue") ? 0 : 1;
+
+  if (t_total <= 0.0) {
+    finish_event(rob.tag, verb, node, color, qty, did_move);
+    return;
+  }
+  rob.event = Event{t_total, actor_id, verb, node, color, qty, did_move};
+}
+
+void EurobotWorld::schedule_yellow_scripted() {
+  if (!yellow_policy) return;
+  auto a = yellow_policy("yellow", *this, yellow, rng_);
+  if (!a) return;
+  schedule(yellow, *a);
+}
+
+void EurobotWorld::advance_until_next() {
+  double tb = blue.event  ? blue.event->t_remaining  : std::numeric_limits<double>::infinity();
+  double ty = yellow.event? yellow.event->t_remaining: std::numeric_limits<double>::infinity();
+  double dt = std::min(tb, ty);
+  if (!std::isfinite(dt) || dt <= 0.0) return;
+
+  t_left_ = std::max(0.0, t_left_ - dt);
+  if (blue.event)   blue.event->t_remaining   -= dt;
+  if (yellow.event) yellow.event->t_remaining -= dt;
+
+  const double eps = 1e-9;
+  if (blue.event && blue.event->t_remaining <= eps) {
+    auto e = *blue.event; blue.event.reset();
+    finish_event("blue", e.verb, e.node, e.color, e.qty, e.did_move);
+  }
+  if (yellow.event && yellow.event->t_remaining <= eps) {
+    auto e = *yellow.event; yellow.event.reset();
+    finish_event("yellow", e.verb, e.node, e.color, e.qty, e.did_move);
+  }
+}
+
+void EurobotWorld::finish_event(const std::string& actor_tag, int verb_i, int node, int color, int qty, bool did_move) {
+  RobotState& rob = (actor_tag=="blue") ? blue : yellow;
+  const Profile& prof = rob.profile;
+  if (did_move) rob.node = node;
+
+  Verb verb = static_cast<Verb>(verb_i);
+  if (verb == Verb::PICK) {
+    int idx = pantry_idx_[node]; // NOTE: in Python PICKs come from PICKUPS, here we map separately:
+    idx = pickup_idx_[node];
+    if (idx != -1) {
+      int can_take = pickups_[idx][color];
+      int inv_sum = rob.inv[0] + rob.inv[1];
+      int room = std::max(0, prof.capacity - inv_sum);
+      int take = std::max(0, std::min({qty, can_take, room}));
+      if (take > 0) {
+        pickups_[idx][color] -= static_cast<int16_t>(take);
+        rob.inv[color]       += static_cast<int16_t>(take);
+      }
+    }
+  }
+
+  if (verb == Verb::PLACE) {
+    int have = rob.inv[color];
+    int idx = pantry_idx_[node];
+    if (idx != -1) {
+      int total_here = pantries_[idx][0] + pantries_[idx][1];
+      int room = std::max(0, pantry_cap_ - total_here);
+      int put = std::max(0, std::min({qty, have, room}));
+      if (put > 0) {
+        pantries_[idx][color] += static_cast<int16_t>(put);
+        rob.inv[color]        -= static_cast<int16_t>(put);
+      }
+    }
+    if (actor_tag=="blue" && node==NEST_BLUE) {
+      int put = std::max(0, std::min(qty, have));
+      int delta = std::min(put, std::max(0, NEST_CAP - nest_blue_));
+      if (delta > 0) { rob.inv[color] -= static_cast<int16_t>(delta); nest_blue_ += delta; }
+    }
+    if (actor_tag=="yellow" && node==NEST_YELL) {
+      int put = std::max(0, std::min(qty, have));
+      int delta = std::min(put, std::max(0, NEST_CAP - nest_yellow_));
+      if (delta > 0) { rob.inv[color] -= static_cast<int16_t>(delta); nest_yellow_ += delta; }
+    }
+  }
+
+  if (verb == Verb::FLIP) {
+    if (!prof.can_flip) { /* no-op */ }
+    int src_c = (color==0) ? 1 : 0; // move from non-target to target
+    // choose more abundant non-target
+    if (rob.inv[0] < rob.inv[1]) src_c = 0;
+    int k = std::min(qty, (int)rob.inv[src_c]);
+    if (k > 0) {
+      rob.inv[src_c] -= static_cast<int16_t>(k);
+      rob.inv[color] += static_cast<int16_t>(k);
+    }
+  }
+
+  if (verb == Verb::STEAL) {
+    if (!allow_steal_) { /* no-op */ return; }
+    int idx = pantry_idx_[node];
+    if (idx != -1) {
+      int have = pantries_[idx][color];
+      int inv_sum = rob.inv[0] + rob.inv[1];
+      int room = std::max(0, prof.capacity - inv_sum);
+      int take = std::max(0, std::min({qty, have, room}));
+      if (take > 0) {
+        pantries_[idx][color] -= static_cast<int16_t>(take);
+        rob.inv[color]        += static_cast<int16_t>(take);
+      }
+    }
+  }
+}
+
+bool EurobotWorld::step_blue(const Action& a) {
+  if (!blue.event)   schedule(blue, a);
+  if (!yellow.event) schedule_yellow_scripted();
+
+  while (t_left_ > 1e-9 && blue.event) {
+    advance_until_next();
+    if (!yellow.event && blue.event) schedule_yellow_scripted();
+  }
+  return (t_left_ <= 1e-9);
+}
+
+std::pair<float,float> EurobotWorld::final_scores() const {
+  auto sum_color = [](const std::vector<std::array<int16_t,NUM_COLORS>>& M, int c){
+    int s=0; for (auto& r : M) s += r[c]; return s;
+  };
+  float blue_score   = sum_color(pantries_, (int)Col::BLUE)   * r_.pantry_bonus + nest_blue_   * r_.nest_bonus;
+  float yellow_score = sum_color(pantries_, (int)Col::YELLOW) * r_.pantry_bonus + nest_yellow_ * r_.nest_bonus;
+
+  int blue_interest=0, yellow_interest=0;
+  for (auto& p : pantries_) {
+    if (p[(int)Col::BLUE]   > p[(int)Col::YELLOW]) ++blue_interest;
+    if (p[(int)Col::YELLOW] > p[(int)Col::BLUE])   ++yellow_interest;
+  }
+  blue_score   += r_.interest_bonus * blue_interest;
+  yellow_score += r_.interest_bonus * yellow_interest;
+
+  if (blue.node   == NEST_BLUE)  blue_score   += r_.finish_in_nest_bonus;
+  if (yellow.node == NEST_YELL)  yellow_score += r_.finish_in_nest_bonus;
+
+  return {blue_score, yellow_score};
+}
+
+std::pair<float,float> EurobotWorld::final_scores_norm() const {
+  auto [b,y] = final_scores();
+  return { b/160.f, y/160.f };
+}
+
+EurobotState EurobotWorld::get_state() const {
+  EurobotState s;
+  s.t_left = t_left_;
+  s.pantries = pantries_;
+  s.pickups  = pickups_;
+  s.nest_blue = nest_blue_;
+  s.nest_yellow = nest_yellow_;
+  s.blue = blue; s.yellow = yellow;
+  s.allow_steal = allow_steal_;
+  s.pantry_cap = pantry_cap_;
+  return s;
+}
+
+void EurobotWorld::set_state(const EurobotState& s) {
+  t_left_ = s.t_left;
+  pantries_ = s.pantries;
+  pickups_  = s.pickups;
+  nest_blue_ = s.nest_blue;
+  nest_yellow_ = s.nest_yellow;
+  blue = s.blue; yellow = s.yellow;
+  allow_steal_ = s.allow_steal;
+  pantry_cap_ = s.pantry_cap;
+}
+
+} // namespace euro
