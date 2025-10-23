@@ -10,6 +10,8 @@
 #include <tuple>
 #include <utility>
 #include <vector>
+#include <stdexcept>
+#include <torch/torch.h>
 
 namespace eurobot {
 
@@ -41,8 +43,6 @@ struct RewardConfig {
   float nest_bonus = 2.0;        // + per counted crate in nest (cap)
   float pantry_bonus = 3.0;      // + per valid pantry crate (BLUE placed by BLUE)
   float interest_bonus = 5.0;    // + per pantry where BLUE has strict BLUE majority at end
-  float time_penalty = 0.0;      // - per second advanced
-  float invalid_action_penalty = 0.0; // discourages repeated invalid/empty actions
   float finish_in_nest_bonus = 10.0;
 };
 
@@ -88,7 +88,10 @@ class EurobotWorld {
                  uint64_t seed = 0,
                  bool record_history = false);
     void reset(std::optional<uint64_t> seed = std::nullopt);
+    torch::Tensor obs() const;
+    size_t obs_size() const;
     bool step_blue(const Action& a);
+    std::pair<torch::Tensor, bool> step(const Action& a);
 
     EurobotState get_state() const;
     void set_state(const EurobotState& s);
@@ -96,7 +99,10 @@ class EurobotWorld {
     std::pair<float,float> final_scores() const;
     std::pair<float,float> final_scores_norm() const;
 
+    std::vector<Action> action_space() const;
     int N() const { return static_cast<int>(nodes_.size()); }
+    bool allow_steal() const {return allow_steal_;}
+    int pantry_cap() const {return pantry_cap_;}
     const std::vector<Node>& nodes() const { return nodes_; }
     int NEST_BLUE = -1, NEST_YELL = -1;
     std::vector<int> PANTRIES, PICKUPS;

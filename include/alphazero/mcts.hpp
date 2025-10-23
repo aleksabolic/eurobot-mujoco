@@ -3,10 +3,13 @@
 #include <cstdint>
 #include <memory>
 #include <vector>
+#include <random>
 
 #include <torch/torch.h>
 
 #include "alphazero/policy_network.hpp"
+#include "alphazero/action_helper.hpp"
+#include "alphazero/eurobot_world.hpp"
 
 namespace alphazero {
 
@@ -18,35 +21,33 @@ struct MCTSConfig {
 };
 
 struct TreeNode {
-  TreeNode(double prior): prior(prior) {}
-  TreeNode() {}
-  int vis_count = 0;
-  double value_sum = 0.0;
-  double prior = 0.0;
-  std::vector<std::pair<int,TreeNode>> children = {}; // pair (action idx, node)
-  bool is_expanded = false;
+  float prior = 1.0f;
+  int   vis_count = 0;
+  float value_sum = 0.0f;
+  bool  is_expanded = false;
+  // (action_idx, child_ptr)
+  std::vector<std::pair<int, std::shared_ptr<TreeNode>>> children;
 
-  double value(){
-      if(vis_count == 0.0) return 0.0;
-      return value_sum / vis_count;
-  }
+  explicit TreeNode(float p=1.0f) : prior(p) {}
+  inline float value() const { return vis_count ? (value_sum / vis_count) : 0.0f; }
 };
+
 
 class MCTS {
  public:
-  explicit MCTS(MCTSConfig config, PolicyNetwork &network);
+  explicit MCTS(MCTSConfig config, PolicyNetwork &network, ActionHelper &action_helper);
 
-  TreeNode search(const torch::Tensor& root_state);
+  TreeNode search(eurobot::EurobotWorld &world);
 
  private:
   MCTSConfig config_;
-  PolicyNetwork &policy_network;
+  PolicyNetwork &policy_network_;
+  ActionHelper &action_helper_;
 
-  void simulate(const TreeNode &root);
-  double expand(const torch::Tensor &obs, TreeNode &node);
-  std::pair<int, TreeNode> select_child(const TreeNode &node);
-  void backprop(std::vector<TreeNode> &path, double value);
-  void add_dirichlet_noise(TreeNode &root);
+  void simulate(eurobot::EurobotWorld &world, const std::shared_ptr<TreeNode>& root);
+  double expand(eurobot::EurobotWorld &world, std::shared_ptr<TreeNode>& node);
+  std::pair<int, std::shared_ptr<TreeNode>> select_child(const std::shared_ptr<TreeNode>& node);
+  void add_dirichlet_noise(std::shared_ptr<TreeNode>& node);
 };
 
 }  // namespace alphazero

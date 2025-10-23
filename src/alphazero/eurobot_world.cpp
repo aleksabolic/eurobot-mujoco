@@ -54,6 +54,43 @@ std::vector<float> EurobotWorld::build_pairwise_D(const std::vector<Node>& nodes
   return D;
 }
 
+std::vector<Action> EurobotWorld::action_space() const {
+  const int n_verbs  = 4;
+  const int max_qty  = blue.profile.max_action_qty;
+
+  std::vector<Action> actions;
+
+  for (int v = 0; v < n_verbs; ++v) {
+    const Verb verb = static_cast<Verb>(v);
+
+    std::vector<int> nodes;
+    switch (verb) {
+      case Verb::PICK:
+        nodes.assign(PICKUPS.begin(), PICKUPS.end());
+        break;
+      case Verb::PLACE:
+        nodes.assign(PANTRIES.begin(), PANTRIES.end());
+        nodes.push_back(NEST_BLUE);  // blue’s own nest
+        break;
+      case Verb::STEAL:
+        if (allow_steal_) nodes.assign(PANTRIES.begin(), PANTRIES.end());
+        break;
+      case Verb::FLIP:
+        nodes = { NEST_BLUE };       // single canonical node to shrink space
+        break;
+    }
+
+    for (int n : nodes) {
+      for (int c = 0; c < NUM_COLORS; ++c) {
+        for (int q = 1; q <= max_qty; ++q) {
+          actions.push_back(Action{ v, n, c, q });
+        }
+      }
+    }
+  }
+  return actions;
+}
+
 EurobotWorld::EurobotWorld(Profile blue_prof,
                            Profile yellow_prof,
                            RewardConfig rewards,
@@ -85,6 +122,46 @@ void EurobotWorld::reset(std::optional<uint64_t> seed) {
 
   blue.inv = {0,0}; yellow.inv = {0,0};
   blue.event.reset(); yellow.event.reset();
+}
+
+size_t EurobotWorld::obs_size() const {
+  return size_t(2 * N())                                   // blue/yellow one-hots
+       + size_t(NUM_COLORS)                                 // blue_inv
+       + size_t(PANTRIES.size() * NUM_COLORS)               // pantries
+       + size_t(PICKUPS.size()  * NUM_COLORS);              // pickups
+}
+
+torch::Tensor EurobotWorld::obs() const {
+  const int Nn = N();
+  const size_t K = obs_size();
+
+  std::vector<float> buf(K, 0.f);
+  size_t off = 0;
+
+  // blue node one-hot [N]
+  if (blue.node >= 0 && blue.node < Nn) buf[off + blue.node] = 1.f;
+  off += Nn;
+
+  // yellow node one-hot [N]
+  if (yellow.node >= 0 && yellow.node < Nn) buf[off + yellow.node] = 1.f;
+  off += Nn;
+
+  // blue_inv [NUM_COLORS]
+  for (int c = 0; c < NUM_COLORS; ++c) buf[off++] = static_cast<float>(blue.inv[c]);
+
+  // pantries [len(PANTRIES)*NUM_COLORS]
+  for (const auto& row : pantries_) {
+    for (int c = 0; c < NUM_COLORS; ++c) buf[off++] = static_cast<float>(row[c]);
+  }
+
+  // pickups [len(PICKUPS)*NUM_COLORS]
+  for (const auto& row : pickups_) {
+    for (int c = 0; c < NUM_COLORS; ++c) buf[off++] = static_cast<float>(row[c]);
+  }
+
+  // make an owning tensor (clone)
+  auto t = torch::from_blob(buf.data(), {static_cast<long>(K)}, torch::kFloat32).clone();
+  return t;
 }
 
 bool EurobotWorld::check_valid_action(int node, int color, int qty, const RobotState& robot) const {
@@ -228,6 +305,14 @@ bool EurobotWorld::step_blue(const Action& a) {
     if (!yellow.event && blue.event) schedule_yellow_scripted();
   }
   return (t_left_ <= 1e-9);
+}
+
+/*
+ * Public step function (simmilar to gym)
+ */
+std::pair<torch::Tensor, bool> EurobotWorld::step(const Action& a){
+    bool done = step_blue(a);
+    return {obs(), done};
 }
 
 std::pair<float,float> EurobotWorld::final_scores() const {
