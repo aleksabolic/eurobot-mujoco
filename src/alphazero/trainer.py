@@ -87,11 +87,11 @@ class AlphaZeroTrainer:
 
             (logits_v, logits_n, logits_c, logits_q), value = self.network(obs)  # heads
             # build joint logits for ALL actions in the buffer batch
-            with torch.no_grad():
-                verb_idx  = torch.as_tensor(self.helper.act_verb,  device=self.device, dtype=torch.long)
-                node_idx  = torch.as_tensor(self.helper.act_node,  device=self.device, dtype=torch.long)
-                color_idx = torch.as_tensor(self.helper.act_color, device=self.device, dtype=torch.long)
-                qty_idx   = torch.as_tensor(self.helper.act_qty,   device=self.device, dtype=torch.long)
+            
+            node_idx  = self.helper.t_act_node
+            verb_idx  = self.helper.t_act_verb
+            color_idx = self.helper.t_act_color
+            qty_idx   = self.helper.t_act_qty 
 
             # logits_* are [B, dim], we want [B, A] where A=#actions
             joint_logits = (

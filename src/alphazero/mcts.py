@@ -107,23 +107,29 @@ class MCTS:
         obs_tensor = torch.as_tensor(obs, dtype=torch.float32, device=self.device).unsqueeze(0)
         with torch.no_grad():
             (lv, ln, lc, lq), value = self.network(obs_tensor)  # each [1, dim]
-        lv = lv.squeeze(0).detach().cpu()
-        ln = ln.squeeze(0).detach().cpu()
-        lc = lc.squeeze(0).detach().cpu()
-        lq = lq.squeeze(0).detach().cpu()
-
+ 
         # fast composition: joint_logits[a] = lv[v[a]] + ln[n[a]] + lc[c[a]] + lq[q[a]]
-        verb_idx  = torch.as_tensor(self.helper.act_verb,  dtype=torch.long)
-        node_idx  = torch.as_tensor(self.helper.act_node,  dtype=torch.long)
-        color_idx = torch.as_tensor(self.helper.act_color, dtype=torch.long)
-        qty_idx   = torch.as_tensor(self.helper.act_qty,   dtype=torch.long)
+        verb_idx  = self.helper.t_act_verb
+        node_idx  = self.helper.t_act_node
+        color_idx = self.helper.t_act_color
+        qty_idx   = self.helper.t_act_qty
 
-        joint = lv[verb_idx] + ln[node_idx] + lc[color_idx] + lq[qty_idx]  # [A] torch
-        joint_np = joint.numpy()
+        joint = (
+            lv[0, verb_idx] +
+            ln[0, node_idx] +
+            lc[0, color_idx] +
+            lq[0, qty_idx]
+        )
 
-        # masked softmax over legal actions 
-        priors = self._masked_softmax(joint_np, mask)
-        node.children = {idx: TreeNode(prior=float(priors[idx])) for idx, valid in enumerate(mask) if valid}
+        mask_np = self.helper.legal_action_mask(obs)            
+        mask = torch.from_numpy(mask_np).to(self.device)          
+
+        masked_logits = joint.masked_fill(~mask, float("-inf"))    
+        priors = torch.softmax(masked_logits, dim=0)              
+        priors = torch.where(mask, priors, torch.zeros_like(priors))
+
+        priors_cpu = priors.detach().cpu().numpy()
+        node.children = {i: TreeNode(prior=float(priors_cpu[i])) for i in np.nonzero(mask_np)[0]}
         node.is_expanded = True
         return float(value.item())
 
@@ -158,7 +164,7 @@ class MCTS:
             return
         alpha = self.cfg.dirichlet_alpha
         epsilon = self.cfg.dirichlet_epsilon
-        noise = np.random.dirichlet([alpha] * len(actions))
+        noise = torch.distributions.Dirichlet(torch.full((len(actions),), alpha, device=self.device)).sample().tolist()
         for action, n in zip(actions, noise):
             child = node.children[action]
             child.prior = (1 - epsilon) * child.prior + epsilon * float(n)

@@ -4,6 +4,7 @@ from dataclasses import dataclass
 from typing import Dict, Iterable, List, Sequence, Tuple
 
 import numpy as np
+import torch
 
 from eurobot_world import NEST_CAP
 from robot import Verb
@@ -103,6 +104,11 @@ class EurobotActionHelper:
         self.act_node  = arr[:, 1]
         self.act_color = arr[:, 2]
         self.act_qty   = arr[:, 3]
+
+        self.t_act_verb  = torch.as_tensor( arr[:, 0] , dtype=torch.long)
+        self.t_act_node  = torch.as_tensor( arr[:, 1] , dtype=torch.long)
+        self.t_act_color = torch.as_tensor( arr[:, 2] , dtype=torch.long)
+        self.t_act_qty   = torch.as_tensor( arr[:, 3] , dtype=torch.long)
 
         # add after self.act_qty = arr[:, 3]
         self.idx_pick  = np.asarray(self.per_verb_indices[Verb.PICK],  dtype=np.int64)
@@ -241,6 +247,5 @@ class EurobotActionHelper:
         return mask
 
     def legal_actions(self, obs: np.ndarray) -> List[int]:
-        mask = self.legal_action_mask(obs)
-        return [idx for idx, is_valid in enumerate(mask) if is_valid]
+        return np.flatnonzero(self.legal_action_mask(obs)).tolist()
 
