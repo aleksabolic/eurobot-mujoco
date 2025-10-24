@@ -44,6 +44,7 @@ void AlphaZeroTrainer::set_device(const torch::Device& device) {
 
 void AlphaZeroTrainer::train() {
   for (int it = 0; it < cfg_.num_iterations; ++it) {
+    std::cout<< "Iteration num: " << it << std::endl;
     for (int g = 0; g < cfg_.games_per_iter; ++g) {
       play_episode();
     }

@@ -135,8 +135,9 @@ size_t EurobotWorld::obs_size() const {
 torch::Tensor EurobotWorld::obs() const {
   const int Nn = N();
   const size_t K = obs_size();
+  auto t = torch::empty({(long)K}, torch::kFloat32);
+  auto* buf = t.data_ptr<float>();
 
-  std::vector<float> buf(K, 0.f);
   size_t off = 0;
 
   // blue node one-hot [N]
@@ -161,7 +162,6 @@ torch::Tensor EurobotWorld::obs() const {
   }
 
   // make an owning tensor (clone)
-  auto t = torch::from_blob(buf.data(), {static_cast<long>(K)}, torch::kFloat32).clone();
   return t;
 }
 

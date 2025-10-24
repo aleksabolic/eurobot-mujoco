@@ -27,8 +27,8 @@ class PolicyNetworkImpl : public torch::nn::Module {
   [[nodiscard]] const PolicyNetworkOptions& options() const noexcept { return options_; }
 
  private:
+  std::vector<torch::nn::Linear> layers_;
   PolicyNetworkOptions options_;
-  torch::nn::Sequential trunk_;
   torch::nn::Linear policy_head_;
   torch::nn::Linear value_head_;
 };
