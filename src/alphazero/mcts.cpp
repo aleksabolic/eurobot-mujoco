@@ -43,6 +43,7 @@ TreeNode MCTS::search(eurobot::EurobotWorld &world) {
 double MCTS::expand(eurobot::EurobotWorld &world, std::shared_ptr<TreeNode>& node){
     // run obs through policy network
     auto [logits, value] = policy_network_->forward(world.obs());
+    logits = logits.squeeze(0);
     TORCH_CHECK(logits.dim() == 1, "policy logits must be 1D [A]");
     TORCH_CHECK(logits.dtype() == torch::kFloat32, "policy logits must be float32");
     TORCH_CHECK(logits.size(0) == (long)action_helper_.actions().size(),

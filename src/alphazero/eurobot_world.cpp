@@ -55,6 +55,7 @@ std::vector<float> EurobotWorld::build_pairwise_D(const std::vector<Node>& nodes
 }
 
 std::vector<Action> EurobotWorld::action_space() const {
+  // TODO: check why action dim is 360 instead of 240
   const int n_verbs  = 4;
   const int max_qty  = blue.profile.max_action_qty;
 

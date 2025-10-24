@@ -33,6 +33,7 @@ PolicyNetworkImpl::PolicyNetworkImpl(PolicyNetworkOptions options)
       trunk_->push_back(torch::nn::Linear(
           torch::nn::LinearOptions(prev_dim, size)));
       trunk_->push_back(torch::nn::ReLU());
+      prev_dim = size;
   }
 }
 
