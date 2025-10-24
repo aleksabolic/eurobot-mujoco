@@ -1,26 +1,41 @@
-# C++ AlphaZero Template
+# C++ AlphaZero Eurobot
 
-This directory contains a starter C++ project that mirrors the high-level AlphaZero structure used by the Python prototype. It is configured to build against LibTorch (the official PyTorch C++ API) and provides minimal scaffolding for a policy network, Monte-Carlo Tree Search (MCTS) loop, and a training harness.
+This directory contains a starter C++ project that implements high-level AlphaZero algorithm. It is configured to build against LibTorch (the official PyTorch C++ API) and provides minimal scaffolding for a policy network, Monte-Carlo Tree Search (MCTS) loop, and a training harness.
 
 ## Layout
 
 ```
-src/cpp
-├── CMakeLists.txt           # Standalone CMake entry point
-├── include/alphazero        # Public headers
-│   ├── mcts.hpp
-│   ├── policy_network.hpp
-│   └── trainer.hpp
-├── src                      # Library / executable sources
-│   ├── alphazero
-│   │   ├── mcts.cpp
-│   │   ├── policy_network.cpp
-│   │   └── trainer.cpp
-│   └── main.cpp             # Example wiring of the components
-└── README.md
+├── assets
+│   ├── arena.xml
+│   ├── granary_beta.png
+│   ├── table_beta.png
+│   ├── table.png
+│   └── view_arena.py
+├── CMakeLists.txt
+├── configs
+│   ├── blue_robot.yaml
+│   └── yellow_robot.yaml
+├── demo.gif
+├── include
+│   └── alphazero
+│       ├── action_helper.hpp
+│       ├── eurobot_world.hpp
+│       ├── mcts.hpp
+│       ├── policy_network.hpp
+│       └── trainer.hpp
+├── README.md
+├── src
+│   ├── alphazero
+│   │   ├── action_helper.cpp
+│   │   ├── eurobot_world.cpp
+│   │   ├── mcts.cpp
+│   │   ├── policy_network.cpp
+│   │   └── trainer.cpp
+│   └── main.cpp
+└── utils
+    ├── click_coords.py
+    └── manual_play.py
 ```
-
-The code is intentionally lightweight and focuses on API shape and compilation setup. Replace the stub logic with your production implementation as you port features from Python.
 
 ## Prerequisites
 
@@ -34,24 +49,6 @@ The code is intentionally lightweight and focuses on API shape and compilation s
 Use CMake with the standalone project entry point in this directory. Tell CMake where to find LibTorch via `CMAKE_PREFIX_PATH` (or by setting `Torch_DIR`).
 
 ```bash
-cmake -S src/cpp -B build/cpp -DCMAKE_PREFIX_PATH=/path/to/libtorch
-cmake --build build/cpp
+cmake -S src/ -B build/ -DCMAKE_PREFIX_PATH=/path/to/libtorch
+cmake --build build/
 ```
-
-The first command configures the project and generates build files in `build/cpp/`. The second command compiles the static library (`eurobot_alphazero`) and the sample executable (`eurobot_app`).
-
-### Running the sample
-
-```bash
-./build/cpp/eurobot_app
-```
-
-The executable prints dummy metrics and shows how to wire the trainer and search loop together. Replace this with your own entry point once you integrate the Eurobot environment.
-
-## Next Steps
-
-- Replace the placeholder logic in `alphazero::MCTS` and `alphazero::AlphaZeroTrainer` with the real algorithms.
-- Port environment interactions from Python one component at a time, exposing them via C++ headers inside `include/`.
-- Add tests (e.g., GoogleTest or Catch2) and hook them into the CMake project once the core code solidifies.
-
-Happy hacking!
