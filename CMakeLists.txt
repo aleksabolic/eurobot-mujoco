@@ -23,8 +23,10 @@ set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
 message(STATUS "LibTorch CUDA support: ${Torch_CUDA_FOUND}")
 
 add_library(eurobot_alphazero STATIC
-  src/alphazero/policy_network.cpp
+  src/alphazero/action_helper.cpp
+  src/alphazero/eurobot_world.cpp
   src/alphazero/mcts.cpp
+  src/alphazero/policy_network.cpp
   src/alphazero/trainer.cpp
 )
 
