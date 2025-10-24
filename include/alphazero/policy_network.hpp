@@ -2,6 +2,7 @@
 
 #include <cstdint>
 #include <utility>
+#include <vector>
 
 #include <torch/torch.h>
 
@@ -9,9 +10,8 @@ namespace alphazero {
 
 struct PolicyNetworkOptions {
   int64_t input_size = 1;
-  int64_t hidden_size = 128;
+  std::vector<int> hidden_sizes = {256, 256};
   int64_t action_size = 1;
-  int residual_blocks = 0;
 };
 
 struct PolicyOutput {

@@ -1,59 +1,97 @@
-#include <algorithm>
+// src/main.cpp
 #include <iostream>
-#include <utility>
-
 #include <torch/torch.h>
 
-#include "alphazero/mcts.hpp"
-#include "alphazero/policy_network.hpp"
 #include "alphazero/trainer.hpp"
+#include "alphazero/eurobot_world.hpp"
+#include "alphazero/policy_network.hpp"
+
+using namespace alphazero;
+using namespace eurobot;
 
 int main() {
-  torch::manual_seed(0);
+  // device
+  torch::Device device = torch::cuda::is_available() ? torch::kCUDA : torch::kCPU;
+  torch::manual_seed(42);
 
-  alphazero::PolicyNetworkOptions network_options;
-  network_options.input_size = 64;
-  network_options.hidden_size = 128;
-  network_options.action_size = 16;
-  network_options.residual_blocks = 1;
+  // TODO: move these to .yaml
+  // ---- Eurobot world setup ----
+  Profile blue_prof{
+    /*capacity=*/6,
+    /*max_action_qty=*/6,
+    /*can_flip=*/true,
+    /*travel_time=*/[](double d){ return 0.5 * d; },
+    /*handle_time=*/[](Verb v, int q){
+      switch (v) {
+        case Verb::PICK:  return 0.20 * q;
+        case Verb::PLACE: return 0.20 * q;
+        case Verb::FLIP:  return 0.10 * q;
+        case Verb::STEAL: return 0.30 * q;
+      }
+      return 0.0;
+    }
+  };
+  Profile yellow_prof = blue_prof;
 
-  auto policy = alphazero::PolicyNetwork(network_options);
+  RewardConfig R{
+    /*pantry_bonus=*/1.f,
+    /*nest_bonus=*/5.f,
+    /*interest_bonus=*/1.f,
+    /*finish_in_nest_bonus=*/2.f
+  };
 
-  alphazero::MCTSConfig mcts_config;
-  mcts_config.simulations = 64;
+  EurobotWorld world(blue_prof, yellow_prof, R, /*allow_steal=*/true, /*seed=*/42, /*record_history=*/false);
 
-  alphazero::TrainingConfig training_config;
-  training_config.learning_rate = 1e-3;
+  // sizes
+  const int64_t obs_dim = world.obs().size(0);
+  const int64_t action_dim = static_cast<int64_t>(world.action_space().size());
 
-  alphazero::AlphaZeroTrainer trainer(std::move(policy), mcts_config, training_config);
+  // ---- Network ----
+  PolicyNetworkOptions network_options {
+      /*input_size=*/ obs_dim,
+      /*hidden_sizes=*/ {256, 256},
+      /*action_size=*/ action_dim
+  };
 
-  const auto device = torch::cuda::is_available() ? torch::kCUDA : torch::kCPU;
+  auto net = PolicyNetwork(std::move(network_options));
+  net->to(device);
+
+  // ---- Trainer config ----
+  TrainingConfig cfg;
+  cfg.num_iterations        = 10;
+  cfg.games_per_iter        = 4;
+  cfg.training_steps        = 200;
+  cfg.batch_size            = 128;
+  cfg.replay_capacity       = 50'000;
+
+  cfg.num_simulations       = 128;
+  cfg.cpuct                 = 1.5;
+  cfg.dirichlet_alpha       = 0.3;
+  cfg.dirichlet_epsilon     = 0.25;
+
+  cfg.learning_rate         = 1e-3;
+  cfg.weight_decay          = 1e-4;
+  cfg.max_grad_norm         = 5.0;
+
+  cfg.policy_loss_weight    = 1.0;
+  cfg.value_loss_weight     = 1.0;
+  cfg.entropy_weight        = 0.0;
+
+  cfg.temperature           = 1.0;
+  cfg.temperature_decay_steps = 30;
+
+  // ---- Trainer ----
+  AlphaZeroTrainer trainer(net, world, cfg);
   trainer.set_device(device);
 
-  auto states =
-      torch::randn({8, network_options.input_size}, torch::TensorOptions().dtype(torch::kFloat32));
-  auto target_policies = torch::softmax(
-      torch::randn({8, network_options.action_size}, torch::TensorOptions().dtype(torch::kFloat32)),
-      -1);
-  auto target_values =
-      torch::randn({8}, torch::TensorOptions().dtype(torch::kFloat32)).clamp(-1.0, 1.0);
+  std::cout << "device: " << (device.is_cuda() ? "CUDA" : "CPU")
+            << ", obs_dim=" << obs_dim
+            << ", action_dim=" << action_dim << std::endl;
 
-  auto metrics = trainer.train_step(states, target_policies, target_values);
+  trainer.train();
 
-  std::cout << "Training step metrics\n"
-            << "  total loss : " << metrics.total_loss << "\n"
-            << "  policy loss: " << metrics.policy_loss << "\n"
-            << "  value loss : " << metrics.value_loss << "\n"
-            << "  entropy    : " << metrics.entropy << "\n";
-
-  auto search_results = trainer.mcts().run_search(states[0], trainer.policy());
-
-  std::cout << "\nSample search results (" << search_results.size() << " actions)\n";
-  for (size_t i = 0; i < std::min<size_t>(search_results.size(), 5); ++i) {
-    const auto& result = search_results[i];
-    std::cout << "  action " << result.action << ": prior=" << result.prior
-              << ", q=" << result.q_value << ", visits=" << result.visit_count << "\n";
-  }
+  // save checkpoint
+  torch::save(net, "runs/alphazero_policy.pt");
 
   return 0;
 }

@@ -1,49 +1,70 @@
 #pragma once
 
-#include <utility>
-
 #include <torch/torch.h>
-
-#include "alphazero/mcts.hpp"
 #include "alphazero/policy_network.hpp"
+#include "alphazero/action_helper.hpp"
+#include "alphazero/eurobot_world.hpp"
+#include "alphazero/mcts.hpp"
+#include "alphazero/replay_buffer.hpp"
 
 namespace alphazero {
 
 struct TrainingConfig {
-  double learning_rate = 1e-3;
-  double policy_loss_weight = 1.0;
-  double value_loss_weight = 1.0;
-  double entropy_weight = 1e-2;
-  double weight_decay = 1e-4;
-};
+  int    num_iterations      = 10;
+  int    games_per_iter      = 4;
+  int    training_steps      = 200;
+  int    batch_size          = 128;
+  int    replay_capacity     = 50'000;
 
-struct TrainingStepMetrics {
-  double total_loss = 0.0;
-  double policy_loss = 0.0;
-  double value_loss = 0.0;
-  double entropy = 0.0;
+  int    num_simulations     = 128;
+  double cpuct               = 1.5;
+  double dirichlet_alpha     = 0.3;
+  double dirichlet_epsilon   = 0.25;
+
+  double learning_rate       = 1e-3;
+  double weight_decay        = 1e-4;
+  double max_grad_norm       = 5.0;
+
+  double policy_loss_weight  = 1.0;
+  double value_loss_weight   = 1.0;
+  double entropy_weight      = 0.0;
+
+  double temperature         = 1.0;
+  int    temperature_decay_steps = 30;
 };
 
 class AlphaZeroTrainer {
- public:
-  AlphaZeroTrainer(PolicyNetwork policy, MCTSConfig mcts_config, TrainingConfig training_config);
+public:
+  AlphaZeroTrainer(PolicyNetwork network,
+                   eurobot::EurobotWorld world,
+                   const TrainingConfig& cfg);
 
-  void set_device(torch::Device device);
-  [[nodiscard]] const torch::Device& device() const noexcept { return device_; }
+  void set_device(const torch::Device& device);
+  void train();
 
-  [[nodiscard]] PolicyNetwork& policy() noexcept { return policy_; }
-  [[nodiscard]] MCTS& mcts() noexcept { return mcts_; }
+private:
+  void play_episode();
+  void optimize_step();
 
-  TrainingStepMetrics train_step(const torch::Tensor& states,
-                                 const torch::Tensor& target_policies,
-                                 const torch::Tensor& target_values);
+  // helpers
+  int sample_action_from_visits(const std::vector<float>& visits, double temperature);
+  double select_temperature(int step_idx) const;
 
- private:
-  PolicyNetwork policy_;
-  MCTS mcts_;
-  TrainingConfig config_;
-  torch::optim::Adam optimizer_;
+private:
+  TrainingConfig cfg_;
   torch::Device device_ = torch::kCPU;
+
+  // ownership
+  PolicyNetwork policy_;
+  eurobot::EurobotWorld world_;
+  ActionHelper action_helper_;
+  ReplayBuffer replay_;
+
+  MCTS mcts_;
+  torch::optim::Adam optimizer_;
+
+  // cached dims
+  int64_t action_dim_ = 0;
 };
 
-}  // namespace alphazero
+} // namespace alphazero

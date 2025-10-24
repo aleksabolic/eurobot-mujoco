@@ -1,6 +1,7 @@
 #include "alphazero/policy_network.hpp"
 
 #include <stdexcept>
+#include <torch/nn/options/linear.h>
 
 namespace alphazero {
 
@@ -21,32 +22,17 @@ PolicyNetworkImpl::PolicyNetworkImpl(PolicyNetworkOptions options)
       trunk_(register_module("trunk", torch::nn::Sequential())),
       policy_head_(register_module(
           "policy_head",
-          torch::nn::Linear(torch::nn::LinearOptions(options_.hidden_size, options_.action_size)))),
+          torch::nn::Linear(torch::nn::LinearOptions(options_.hidden_sizes.back(), options_.action_size)))),
       value_head_(register_module(
-          "value_head", torch::nn::Linear(torch::nn::LinearOptions(options_.hidden_size, 1)))) {
+          "value_head",
+          torch::nn::Linear(torch::nn::LinearOptions(options_.hidden_sizes.back(), 1)))) {
 
-            
-  if (options_.input_size <= 0) {
-    throw std::invalid_argument("PolicyNetwork: input_size must be positive");
-  }
-  if (options_.hidden_size <= 0) {
-    throw std::invalid_argument("PolicyNetwork: hidden_size must be positive");
-  }
-  if (options_.action_size <= 0) {
-    throw std::invalid_argument("PolicyNetwork: action_size must be positive");
-  }
-
-  trunk_->push_back(torch::nn::Linear(
-      torch::nn::LinearOptions(options_.input_size, options_.hidden_size)));
-  trunk_->push_back(torch::nn::ReLU());
-  trunk_->push_back(torch::nn::Linear(
-      torch::nn::LinearOptions(options_.hidden_size, options_.hidden_size)));
-  trunk_->push_back(torch::nn::ReLU());
-
-  for (int i = 0; i < options_.residual_blocks; ++i) {
-    trunk_->push_back(torch::nn::Linear(
-        torch::nn::LinearOptions(options_.hidden_size, options_.hidden_size)));
-    trunk_->push_back(torch::nn::ReLU());
+  // build the trunk of the model
+  int prev_dim = options_.input_size;
+  for(int size : options_.hidden_sizes){
+      trunk_->push_back(torch::nn::Linear(
+          torch::nn::LinearOptions(prev_dim, size)));
+      trunk_->push_back(torch::nn::ReLU());
   }
 }
 
@@ -54,7 +40,7 @@ PolicyOutput PolicyNetworkImpl::forward(const torch::Tensor& state) {
   auto x = flatten_state(state);
   x = trunk_->forward(x);
   auto logits = policy_head_->forward(x);
-  auto value = torch::tanh(value_head_->forward(x));
+  auto value = value_head_->forward(x);
   return {logits, value};
 }
 
