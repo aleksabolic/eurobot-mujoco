@@ -1,5 +1,6 @@
 #include "alphazero/trainer.hpp"
 #include <algorithm>
+#include <iostream>
 #include <numeric>
 #include <random>
 
@@ -35,6 +36,15 @@ AlphaZeroTrainer::AlphaZeroTrainer(PolicyNetwork network,
 
   TORCH_CHECK(policy_, "AlphaZeroTrainer: policy network must be non-null");
   action_dim_ = static_cast<int64_t>(action_helper_.actions().size());
+
+  if (cfg_.enable_tensorboard && !cfg_.log_dir.empty()) {
+    try {
+      tb_logger_ = std::make_unique<TensorboardLogger>(cfg_.log_dir, cfg_.run_name);
+      std::cout << "TensorBoard events: " << tb_logger_->file_path() << std::endl;
+    } catch (const std::exception& ex) {
+      std::cerr << "[AlphaZeroTrainer] TensorBoard logger disabled: " << ex.what() << std::endl;
+    }
+  }
 }
 
 void AlphaZeroTrainer::set_device(const torch::Device& device) {
@@ -44,18 +54,38 @@ void AlphaZeroTrainer::set_device(const torch::Device& device) {
 
 void AlphaZeroTrainer::train() {
   for (int it = 0; it < cfg_.num_iterations; ++it) {
-    std::cout<< "Iteration num: " << it << std::endl;
+    std::cout << "Iteration num: " << it << std::endl;
+    double blue_return_sum = 0.0;
+    double yellow_return_sum = 0.0;
+    int episodes_collected = 0;
+
     for (int g = 0; g < cfg_.games_per_iter; ++g) {
-      play_episode();
+      const auto scores = play_episode();
+      blue_return_sum += scores.first;
+      yellow_return_sum += scores.second;
+      ++episodes_collected;
     }
+
+    if (tb_logger_ && episodes_collected > 0) {
+      const double denom = static_cast<double>(episodes_collected);
+      const double avg_return = blue_return_sum / denom;
+      const double blue_mean = blue_return_sum / denom;
+      const double yellow_mean = yellow_return_sum / denom;
+
+      tb_logger_->add_scalar("train/avg_return", iteration_counter_, avg_return);
+      tb_logger_->add_scalar("rollout/blue_final_score_mean", iteration_counter_, blue_mean);
+      tb_logger_->add_scalar("rollout/yellow_final_score_mean", iteration_counter_, yellow_mean);
+    }
+
     for (int s = 0; s < cfg_.training_steps; ++s) {
       optimize_step();
     }
+    ++iteration_counter_;
     // TODO: checkpoint (torch::save policy_->named_parameters(), etc.)
   }
 }
 
-void AlphaZeroTrainer::play_episode() {
+std::pair<float, float> AlphaZeroTrainer::play_episode() {
   policy_->eval();
 
   world_.reset();                 // restart match
@@ -67,7 +97,7 @@ void AlphaZeroTrainer::play_episode() {
 
   while (!done) {
     // snapshot state (so MCTS can restore per sim)
-    const auto root_state = world_.get_state();
+    [[maybe_unused]] const auto root_state = world_.get_state();
 
     // run MCTS from current state
     auto root = mcts_.search(world_);  // returns TreeNode by value (has children with ptrs)
@@ -89,7 +119,7 @@ void AlphaZeroTrainer::play_episode() {
       for (int64_t i = 0; i < legal_cpu.numel(); ++i)
         if (legal_cpu[i].item<bool>()) visits[(size_t)i] = 1.0f;
       total_visits = static_cast<int>(std::accumulate(visits.begin(), visits.end(), 0.0f));
-      if (total_visits == 0) return; // degenerate
+      if (total_visits == 0) return {0.f, 0.f}; // degenerate
     }
     // normalize
     for (float& v : visits) v = v / std::max(1, total_visits);
@@ -119,6 +149,7 @@ void AlphaZeroTrainer::play_episode() {
     auto piT = torch::from_blob(pi_list[i].data(), { (long)action_dim_ }, torch::kFloat32).clone();
     replay_.add(obs_list[i].detach().clone(), piT, ret);
   }
+  return scores;
 }
 
 void AlphaZeroTrainer::optimize_step() {
@@ -155,6 +186,17 @@ void AlphaZeroTrainer::optimize_step() {
     torch::nn::utils::clip_grad_norm_(policy_->parameters(), cfg_.max_grad_norm);
   }
   optimizer_.step();
+
+  if (tb_logger_) {
+    const double loss_val = loss.detach().cpu().item<double>();
+    const double policy_loss_val = policy_loss.detach().cpu().item<double>();
+    const double value_loss_val  = value_loss.detach().cpu().item<double>();
+
+    tb_logger_->add_scalar("train/loss", train_step_counter_, loss_val);
+    tb_logger_->add_scalar("train/policy_loss", train_step_counter_, policy_loss_val);
+    tb_logger_->add_scalar("train/value_loss", train_step_counter_, value_loss_val);
+  }
+  ++train_step_counter_;
 }
 
 /* --------- helpers ---------- */

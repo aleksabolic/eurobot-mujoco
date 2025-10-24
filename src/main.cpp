@@ -17,8 +17,8 @@ int main() {
   // TODO: move these to .yaml
   // ---- Eurobot world setup ----
   Profile blue_prof{
-    /*capacity=*/6,
-    /*max_action_qty=*/6,
+    /*capacity=*/8,
+    /*max_action_qty=*/4,
     /*can_flip=*/true,
     /*travel_time=*/[](double d){ return 0.5 * d; },
     /*handle_time=*/[](Verb v, int q){
@@ -34,10 +34,10 @@ int main() {
   Profile yellow_prof = blue_prof;
 
   RewardConfig R{
-    /*pantry_bonus=*/1.f,
-    /*nest_bonus=*/5.f,
-    /*interest_bonus=*/1.f,
-    /*finish_in_nest_bonus=*/2.f
+    /*pantry_bonus=*/3.f,
+    /*nest_bonus=*/2.f,
+    /*interest_bonus=*/5.f,
+    /*finish_in_nest_bonus=*/10.f
   };
 
   EurobotWorld world(blue_prof, yellow_prof, R, /*allow_steal=*/true, /*seed=*/42, /*record_history=*/false);
@@ -58,7 +58,7 @@ int main() {
 
   // ---- Trainer config ----
   TrainingConfig cfg;
-  cfg.num_iterations        = 10;
+  cfg.num_iterations        = 30;
   cfg.games_per_iter        = 4;
   cfg.training_steps        = 200;
   cfg.batch_size            = 128;
@@ -79,6 +79,7 @@ int main() {
 
   cfg.temperature           = 1.0;
   cfg.temperature_decay_steps = 30;
+  cfg.run_name              = "alphazero";
 
   // ---- Trainer ----
   AlphaZeroTrainer trainer(net, world, cfg);

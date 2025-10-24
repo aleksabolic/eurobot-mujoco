@@ -1,11 +1,16 @@
 #pragma once
 
+#include <memory>
+#include <string>
+#include <utility>
 #include <torch/torch.h>
+
 #include "alphazero/policy_network.hpp"
 #include "alphazero/action_helper.hpp"
 #include "alphazero/eurobot_world.hpp"
 #include "alphazero/mcts.hpp"
 #include "alphazero/replay_buffer.hpp"
+#include "alphazero/tensorboard_logger.hpp"
 
 namespace alphazero {
 
@@ -31,6 +36,10 @@ struct TrainingConfig {
 
   double temperature         = 1.0;
   int    temperature_decay_steps = 30;
+
+  bool enable_tensorboard    = true;
+  std::string log_dir        = "runs";
+  std::string run_name       = "";
 };
 
 class AlphaZeroTrainer {
@@ -43,7 +52,7 @@ public:
   void train();
 
 private:
-  void play_episode();
+  std::pair<float, float> play_episode();
   void optimize_step();
 
   // helpers
@@ -65,6 +74,9 @@ private:
 
   // cached dims
   int64_t action_dim_ = 0;
+  int64_t train_step_counter_ = 0;
+  int64_t iteration_counter_ = 0;
+  std::unique_ptr<TensorboardLogger> tb_logger_;
 };
 
 } // namespace alphazero
