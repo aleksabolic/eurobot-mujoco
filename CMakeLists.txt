@@ -20,6 +20,8 @@ endif()
 find_package(Torch REQUIRED)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
 
+find_package(yaml-cpp REQUIRED)
+
 message(STATUS "LibTorch CUDA support: ${Torch_CUDA_FOUND}")
 
 add_library(eurobot_alphazero STATIC
@@ -53,6 +55,11 @@ target_link_libraries(eurobot_app
   PRIVATE
     eurobot_alphazero
     ${TORCH_LIBRARIES}
+)
+
+target_link_libraries(eurobot_app 
+  PRIVATE 
+    yaml-cpp
 )
 
 if(MSVC)
