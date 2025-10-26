@@ -135,10 +135,9 @@ size_t EurobotWorld::obs_size() const {
 
 torch::Tensor EurobotWorld::obs() const {
   const int Nn = N();
-  // const size_t K = obs_size();
-  // auto t = torch::zeros({(long)K}, torch::kFloat32);
-  obs_buff_.zero_();
-  auto* buf = obs_buff_.data_ptr<float>();
+  const size_t K = obs_size();
+  auto t = torch::zeros({(long)K}, torch::kFloat32);
+  auto* buf = t.data_ptr<float>();
 
   size_t off = 0;
 
@@ -164,7 +163,7 @@ torch::Tensor EurobotWorld::obs() const {
   }
 
   // make an owning tensor (clone)
-  return obs_buff_.clone();
+  return t;
 }
 
 bool EurobotWorld::check_valid_action(int node, int color, int qty, const RobotState& robot) const {
