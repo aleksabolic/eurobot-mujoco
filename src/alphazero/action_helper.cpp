@@ -54,12 +54,7 @@ torch::Tensor ActionHelper::legal_mask(const eurobot::EurobotWorld& world, bool 
 
       case eurobot::Verb::FLIP: {
         // Flip ignores node.
-        if (!rob.profile.can_flip) { mask[i] = 0; break; }
-        const int target = color;
-        const int src = (target == (int)eurobot::Col::BLUE) ? (int)eurobot::Col::YELLOW
-                                                            : (int)eurobot::Col::BLUE;
-        const int have_src = rob.inv[src];
-        mask[i] = (qty <= have_src && qty > 0);
+        mask[i] = (rob.profile.can_flip && qty > 0 && rob.inv[color] >= qty);
       } break;
 
       case eurobot::Verb::STEAL: {

@@ -36,7 +36,8 @@ PolicyNetworkImpl::PolicyNetworkImpl(PolicyNetworkOptions options)
 }
 
 PolicyOutput PolicyNetworkImpl::forward(const torch::Tensor& state) {
-  auto x = flatten_state(state).to(torch::kFloat32);
+  auto target = policy_head_->weight.device();
+  auto x = flatten_state(state).to(torch::TensorOptions().dtype(torch::kFloat32).device(target));
   for (auto& lin : layers_) x = torch::relu(lin->forward(x));
   auto logits = policy_head_->forward(x);
   auto value = value_head_->forward(x);

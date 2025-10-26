@@ -29,8 +29,8 @@ TreeNode MCTS::search(eurobot::EurobotWorld &world) {
     add_dirichlet_noise(root);
 
     for(int i = 0; i < config_.num_simulations; i++){
-        world.set_state(root_state);
         simulate(world, root);
+        world.set_state(root_state);
     }
 
     return *root;

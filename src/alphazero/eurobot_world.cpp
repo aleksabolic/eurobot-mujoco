@@ -122,6 +122,7 @@ void EurobotWorld::reset(std::optional<uint64_t> seed) {
 
   blue.inv = {0,0}; yellow.inv = {0,0};
   blue.event.reset(); yellow.event.reset();
+  blue.node = NEST_BLUE; yellow.node = NEST_YELL;
 }
 
 size_t EurobotWorld::obs_size() const {
@@ -134,7 +135,7 @@ size_t EurobotWorld::obs_size() const {
 torch::Tensor EurobotWorld::obs() const {
   const int Nn = N();
   const size_t K = obs_size();
-  auto t = torch::empty({(long)K}, torch::kFloat32);
+  auto t = torch::zeros({(long)K}, torch::kFloat32);
   auto* buf = t.data_ptr<float>();
 
   size_t off = 0;
@@ -270,14 +271,15 @@ void EurobotWorld::finish_event(const std::string& actor_tag, int verb_i, int no
   }
 
   if (verb == Verb::FLIP) {
+    /*
+    Flip action is defined as flip #qty color crates to opposing color.
+    So if the action is (flip YELLOW 2), and current inv={2,2}, future inv={4,0}
+    */
     if (!prof.can_flip) { /* no-op */ }
-    int src_c = (color==0) ? 1 : 0; // move from non-target to target
-    // choose more abundant non-target
-    if (rob.inv[0] < rob.inv[1]) src_c = 0;
-    int k = std::min(qty, (int)rob.inv[src_c]);
-    if (k > 0) {
-      rob.inv[src_c] -= static_cast<int16_t>(k);
-      rob.inv[color] += static_cast<int16_t>(k);
+    else {
+      int flip_cnt = std::min(qty, (int)rob.inv[color]);
+      rob.inv[color] -= static_cast<int16_t>(flip_cnt);
+      rob.inv[1-color] += static_cast<int16_t>(flip_cnt);
     }
   }
 

@@ -60,3 +60,4 @@ tb_logs.zip
 utils/*.gif
 .vscode
 libtorch
+perf.data*
