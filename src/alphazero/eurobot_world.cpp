@@ -107,6 +107,7 @@ EurobotWorld::EurobotWorld(Profile blue_prof,
 
   blue.tag    = "blue";   blue.profile   = std::move(blue_prof);   blue.node   = NEST_BLUE;
   yellow.tag  = "yellow"; yellow.profile = std::move(yellow_prof); yellow.node = NEST_YELL;
+  obs_buff_ = torch::zeros({(long)obs_size()}, torch::kFloat32);
   reset(seed);
 }
 
@@ -114,11 +115,11 @@ void EurobotWorld::reset(std::optional<uint64_t> seed) {
   if (seed) rng_.seed(*seed);
   t_left_ = TIME_LIMIT_S;
 
-  pantries_.assign(PANTRIES.size(), std::array<int16_t,NUM_COLORS>{0,0});
-  pickups_.assign(PICKUPS.size(),  std::array<int16_t,NUM_COLORS>{0,0});
-  nest_blue_ = 0; nest_yellow_ = 0;
+  pantries.assign(PANTRIES.size(), std::array<int16_t,NUM_COLORS>{0,0});
+  pickups.assign(PICKUPS.size(),  std::array<int16_t,NUM_COLORS>{0,0});
+  nest_blue = 0; nest_yellow = 0;
 
-  for (auto& p : pickups_) { p[(int)Col::BLUE]   = 2; p[(int)Col::YELLOW] = 2; }
+  for (auto& p : pickups) { p[(int)Col::BLUE]   = 2; p[(int)Col::YELLOW] = 2; }
 
   blue.inv = {0,0}; yellow.inv = {0,0};
   blue.event.reset(); yellow.event.reset();
@@ -134,9 +135,10 @@ size_t EurobotWorld::obs_size() const {
 
 torch::Tensor EurobotWorld::obs() const {
   const int Nn = N();
-  const size_t K = obs_size();
-  auto t = torch::zeros({(long)K}, torch::kFloat32);
-  auto* buf = t.data_ptr<float>();
+  // const size_t K = obs_size();
+  // auto t = torch::zeros({(long)K}, torch::kFloat32);
+  obs_buff_.zero_();
+  auto* buf = obs_buff_.data_ptr<float>();
 
   size_t off = 0;
 
@@ -152,17 +154,17 @@ torch::Tensor EurobotWorld::obs() const {
   for (int c = 0; c < NUM_COLORS; ++c) buf[off++] = static_cast<float>(blue.inv[c]);
 
   // pantries [len(PANTRIES)*NUM_COLORS]
-  for (const auto& row : pantries_) {
+  for (const auto& row : pantries) {
     for (int c = 0; c < NUM_COLORS; ++c) buf[off++] = static_cast<float>(row[c]);
   }
 
   // pickups [len(PICKUPS)*NUM_COLORS]
-  for (const auto& row : pickups_) {
+  for (const auto& row : pickups) {
     for (int c = 0; c < NUM_COLORS; ++c) buf[off++] = static_cast<float>(row[c]);
   }
 
   // make an owning tensor (clone)
-  return t;
+  return obs_buff_.clone();
 }
 
 bool EurobotWorld::check_valid_action(int node, int color, int qty, const RobotState& robot) const {
@@ -235,12 +237,12 @@ void EurobotWorld::finish_event(const std::string& actor_tag, int verb_i, int no
     int idx = pantry_idx_[node]; // NOTE: in Python PICKs come from PICKUPS, here we map separately:
     idx = pickup_idx_[node];
     if (idx != -1) {
-      int can_take = pickups_[idx][color];
+      int can_take = pickups[idx][color];
       int inv_sum = rob.inv[0] + rob.inv[1];
       int room = std::max(0, prof.capacity - inv_sum);
       int take = std::max(0, std::min({qty, can_take, room}));
       if (take > 0) {
-        pickups_[idx][color] -= static_cast<int16_t>(take);
+        pickups[idx][color] -= static_cast<int16_t>(take);
         rob.inv[color]       += static_cast<int16_t>(take);
       }
     }
@@ -250,23 +252,23 @@ void EurobotWorld::finish_event(const std::string& actor_tag, int verb_i, int no
     int have = rob.inv[color];
     int idx = pantry_idx_[node];
     if (idx != -1) {
-      int total_here = pantries_[idx][0] + pantries_[idx][1];
+      int total_here = pantries[idx][0] + pantries[idx][1];
       int room = std::max(0, pantry_cap_ - total_here);
       int put = std::max(0, std::min({qty, have, room}));
       if (put > 0) {
-        pantries_[idx][color] += static_cast<int16_t>(put);
+        pantries[idx][color] += static_cast<int16_t>(put);
         rob.inv[color]        -= static_cast<int16_t>(put);
       }
     }
     if (actor_tag=="blue" && node==NEST_BLUE) {
       int put = std::max(0, std::min(qty, have));
-      int delta = std::min(put, std::max(0, NEST_CAP - nest_blue_));
-      if (delta > 0) { rob.inv[color] -= static_cast<int16_t>(delta); nest_blue_ += delta; }
+      int delta = std::min(put, std::max(0, NEST_CAP - nest_blue));
+      if (delta > 0) { rob.inv[color] -= static_cast<int16_t>(delta); nest_blue += delta; }
     }
     if (actor_tag=="yellow" && node==NEST_YELL) {
       int put = std::max(0, std::min(qty, have));
-      int delta = std::min(put, std::max(0, NEST_CAP - nest_yellow_));
-      if (delta > 0) { rob.inv[color] -= static_cast<int16_t>(delta); nest_yellow_ += delta; }
+      int delta = std::min(put, std::max(0, NEST_CAP - nest_yellow));
+      if (delta > 0) { rob.inv[color] -= static_cast<int16_t>(delta); nest_yellow += delta; }
     }
   }
 
@@ -287,12 +289,12 @@ void EurobotWorld::finish_event(const std::string& actor_tag, int verb_i, int no
     if (!allow_steal_) { /* no-op */ return; }
     int idx = pantry_idx_[node];
     if (idx != -1) {
-      int have = pantries_[idx][color];
+      int have = pantries[idx][color];
       int inv_sum = rob.inv[0] + rob.inv[1];
       int room = std::max(0, prof.capacity - inv_sum);
       int take = std::max(0, std::min({qty, have, room}));
       if (take > 0) {
-        pantries_[idx][color] -= static_cast<int16_t>(take);
+        pantries[idx][color] -= static_cast<int16_t>(take);
         rob.inv[color]        += static_cast<int16_t>(take);
       }
     }
@@ -322,11 +324,11 @@ std::pair<float,float> EurobotWorld::final_scores() const {
   auto sum_color = [](const std::vector<std::array<int16_t,NUM_COLORS>>& M, int c){
     int s=0; for (auto& r : M) s += r[c]; return s;
   };
-  float blue_score   = sum_color(pantries_, (int)Col::BLUE)   * r_.pantry_bonus + nest_blue_   * r_.nest_bonus;
-  float yellow_score = sum_color(pantries_, (int)Col::YELLOW) * r_.pantry_bonus + nest_yellow_ * r_.nest_bonus;
+  float blue_score   = sum_color(pantries, (int)Col::BLUE)   * r_.pantry_bonus + nest_blue   * r_.nest_bonus;
+  float yellow_score = sum_color(pantries, (int)Col::YELLOW) * r_.pantry_bonus + nest_yellow * r_.nest_bonus;
 
   int blue_interest=0, yellow_interest=0;
-  for (auto& p : pantries_) {
+  for (auto& p : pantries) {
     if (p[(int)Col::BLUE]   > p[(int)Col::YELLOW]) ++blue_interest;
     if (p[(int)Col::YELLOW] > p[(int)Col::BLUE])   ++yellow_interest;
   }
@@ -347,10 +349,10 @@ std::pair<float,float> EurobotWorld::final_scores_norm() const {
 EurobotState EurobotWorld::get_state() const {
   EurobotState s;
   s.t_left = t_left_;
-  s.pantries = pantries_;
-  s.pickups  = pickups_;
-  s.nest_blue = nest_blue_;
-  s.nest_yellow = nest_yellow_;
+  s.pantries = pantries;
+  s.pickups  = pickups;
+  s.nest_blue = nest_blue;
+  s.nest_yellow = nest_yellow;
   s.blue = blue; s.yellow = yellow;
   s.allow_steal = allow_steal_;
   s.pantry_cap = pantry_cap_;
@@ -359,10 +361,10 @@ EurobotState EurobotWorld::get_state() const {
 
 void EurobotWorld::set_state(const EurobotState& s) {
   t_left_ = s.t_left;
-  pantries_ = s.pantries;
-  pickups_  = s.pickups;
-  nest_blue_ = s.nest_blue;
-  nest_yellow_ = s.nest_yellow;
+  pantries = s.pantries;
+  pickups  = s.pickups;
+  nest_blue = s.nest_blue;
+  nest_yellow = s.nest_yellow;
   blue = s.blue; yellow = s.yellow;
   allow_steal_ = s.allow_steal;
   pantry_cap_ = s.pantry_cap;

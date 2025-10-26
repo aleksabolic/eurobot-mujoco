@@ -114,6 +114,8 @@ class EurobotWorld {
                                         std::mt19937_64&)> yellow_policy;
 
     RobotState blue, yellow;
+    std::vector<std::array<int16_t,NUM_COLORS>> pantries, pickups;
+    int nest_blue = 0, nest_yellow = 0;
 
   private:
     void schedule(RobotState& rob, const Action& a);
@@ -141,9 +143,7 @@ class EurobotWorld {
     std::vector<float> D_; // row-major NxN
 
     std::vector<int> pantry_idx_, pickup_idx_; // size N()
-
-    std::vector<std::array<int16_t,NUM_COLORS>> pantries_, pickups_;
-    int nest_blue_ = 0, nest_yellow_ = 0;
+    mutable torch::Tensor obs_buff_;
 
     int pantry_cap_ = PANTRY_CAP;
 };
