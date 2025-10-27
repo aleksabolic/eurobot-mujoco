@@ -21,7 +21,7 @@ MCTS::MCTS(MCTSConfig config, PolicyNetwork &network, ActionHelper &action_helpe
  * This can be seen as main MCTS function.
  */
 TreeNode MCTS::search(eurobot::EurobotWorld &world) {
-
+    // TODO: Parallelize this 
     const eurobot::EurobotState root_state = world.get_state();
     auto root = std::make_shared<TreeNode>(1.0f);
 

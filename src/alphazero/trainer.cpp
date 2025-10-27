@@ -108,7 +108,7 @@ std::pair<float, float> AlphaZeroTrainer::play_episode() {
   std::vector<std::vector<float>> pi_list;
 
   while (!done) {
-    // run MCTS from current state
+    // run MCTS from current state ()
     auto root = mcts_.search(world_);  // returns TreeNode by value (has children with ptrs)
 
     // visit-count policy
@@ -143,10 +143,12 @@ std::pair<float, float> AlphaZeroTrainer::play_episode() {
     const auto& action = action_helper_.action_by_index(action_idx);
 
     // step environment (Blue)
-    done = world_.step_blue(action);
+    done = world_.step_blue(action) || step_idx > cfg_.max_env_steps;
 
     ++step_idx;
   }
+
+  std::cout << "Number of steps: "<< step_idx << std::endl;
 
   // terminal value (normalized blue score)
   const auto scores = world_.final_scores_norm(); // pair<float,float>

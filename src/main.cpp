@@ -143,6 +143,7 @@ int main() {
     set_scalar("batch_size", cfg.batch_size);
     set_scalar("replay_capacity", cfg.replay_capacity);
     set_scalar("num_simulations", cfg.num_simulations);
+    set_scalar("max_env_steps", cfg.max_env_steps);
     set_scalar("cpuct", cfg.cpuct);
     set_scalar("dirichlet_alpha", cfg.dirichlet_alpha);
     set_scalar("dirichlet_epsilon", cfg.dirichlet_epsilon);

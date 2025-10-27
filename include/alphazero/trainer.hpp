@@ -20,8 +20,9 @@ struct TrainingConfig {
   int    training_steps      = 200;
   int    batch_size          = 128;
   int    replay_capacity     = 50'000;
-
   int    num_simulations     = 128;
+  int    max_env_steps       = 50;
+
   double cpuct               = 1.5;
   double dirichlet_alpha     = 0.3;
   double dirichlet_epsilon   = 0.25;
