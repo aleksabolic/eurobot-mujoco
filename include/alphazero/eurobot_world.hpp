@@ -46,13 +46,11 @@ struct RewardConfig {
   float finish_in_nest_bonus = 10.0;
 };
 
+// TODO: rename this 
 struct Profile {
   int  capacity = 0;
   int  max_action_qty = 0;
   bool can_flip = false;
-  // TODO: move travel time as trapezoid to private world function
-  // and just pass vmax and amax as robot profile args
-  // handle time is ok
   std::function<double(double /*distance*/)> travel_time;
   std::function<double(Verb /*verb*/, int /*qty*/)> handle_time;
 };

@@ -160,10 +160,23 @@ eurobot::Profile load_profile(const YAML::Node& node) {
   p.max_action_qty = node["max_action_qty"].as<int>();
   p.can_flip = node["can_flip"].as<bool>();
 
-  const auto travel = node["travel_time"];
-  const double slope = travel && travel["slope"] ? travel["slope"].as<double>() : 1.0;
-  const double bias = travel && travel["bias"] ? travel["bias"].as<double>() : 0.0;
-  p.travel_time = [slope, bias](double d) { return bias + slope * d; };
+  const float v_max = node["v_max"] ? node["v_max"].as<float>() : 0.2;
+  const float a_max = node["a_max"] ? node["a_max"].as<float>() : 1.0;
+
+  p.travel_time = [v_max, a_max](double d) { 
+    float d_min = v_max * v_max / a_max; 
+
+    float t_motion = 0.0;
+    if(d <= d_min + 1e-12) {
+      t_motion = 2.0 * std::sqrt(d / a_max);
+    }
+    else {
+      t_motion = 2.0 * (v_max / a_max) + (d - d_min) / v_max;
+    }
+
+    // start-stop time + t_motion
+    return 0.4 + t_motion;
+  };
 
   const auto handle = node["handle_time"];
   const auto read_coeff = [&](const char* key, double fallback) {
