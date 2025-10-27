@@ -3,9 +3,8 @@ profiles:
     capacity: 8
     max_action_qty: 4
     can_flip: true
-    travel_time:
-      slope: 0.5
-      bias: 0.0
+    v_max: 0.2
+    a_max: 1
     handle_time:
       PICK: 0.2
       PLACE: 0.2
@@ -15,17 +14,16 @@ profiles:
     capacity: 8
     max_action_qty: 4
     can_flip: true
-    travel_time:
-      slope: 0.5
-      bias: 0.0
+    v_max: 0.2
+    a_max: 1
     handle_time:
       PICK: 0.2
       PLACE: 0.2
       FLIP: 0.1
       STEAL: 0.3
 reward:
-  pantry_bonus: 3.0
   nest_bonus: 2.0
+  pantry_bonus: 3.0
   interest_bonus: 5.0
   finish_in_nest_bonus: 10.0
 world:
@@ -56,8 +54,8 @@ training:
   temperature: 1.0
   temperature_decay_steps: 30
   log_dir: runs
-  run_name: alphazero2
+  run_name: alphazero_baseline
   enable_tensorboard: true
-  checkpoint_path: runs/checkpoints/alphazero_latest.pt
+  checkpoint_path: runs/checkpoints/alphazero_baseline.pt
   checkpoint_interval: 100
   resume_from_checkpoint: false

@@ -84,8 +84,8 @@ void AlphaZeroTrainer::train() {
       const double yellow_mean = yellow_return_sum / denom;
 
       tb_logger_->add_scalar("train/avg_return", iteration_counter_, avg_return);
-      tb_logger_->add_scalar("rollout/blue_final_score_mean", iteration_counter_*160.0, blue_mean);
-      tb_logger_->add_scalar("rollout/yellow_final_score_mean", iteration_counter_*160.0, yellow_mean);
+      tb_logger_->add_scalar("rollout/blue_final_score_mean", iteration_counter_, blue_mean*160.0);
+      tb_logger_->add_scalar("rollout/yellow_final_score_mean", iteration_counter_, yellow_mean*160.0);
     }
 
     for (int s = 0; s < cfg_.training_steps; ++s) {
