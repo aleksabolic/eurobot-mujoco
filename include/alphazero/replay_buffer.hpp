@@ -5,6 +5,7 @@
 #include <stdexcept>
 #include <algorithm>
 #include <torch/torch.h>
+#include <torch/serialize/archive.h>
 
 namespace alphazero {
 
@@ -85,6 +86,67 @@ public:
     }
 
     return ReplaySample{obsT, piT, valT};
+  }
+
+  void save(torch::serialize::OutputArchive& archive) const {
+    archive.write("capacity", torch::tensor(static_cast<int64_t>(capacity_), torch::kInt64));
+    archive.write("size", torch::tensor(static_cast<int64_t>(obs_.size()), torch::kInt64));
+    if (obs_.empty()) return;
+
+    auto stack_tensors = [](const std::deque<torch::Tensor>& source) {
+      std::vector<torch::Tensor> tmp;
+      tmp.reserve(source.size());
+      for (const auto& t : source) {
+        tmp.push_back(t.cpu());
+      }
+      return torch::stack(tmp, 0);
+    };
+
+    auto obs_stack = stack_tensors(obs_);
+    auto pi_stack  = stack_tensors(pi_);
+    archive.write("obs", obs_stack);
+    archive.write("pi",  pi_stack);
+
+    std::vector<float> v(values_.begin(), values_.end());
+    auto val_tensor = torch::from_blob(v.data(), {(long)v.size()}, torch::TensorOptions().dtype(torch::kFloat32)).clone();
+    archive.write("values", val_tensor);
+  }
+
+  void load(torch::serialize::InputArchive& archive) {
+    obs_.clear();
+    pi_.clear();
+    values_.clear();
+    obs_shape_.clear();
+    pi_shape_.clear();
+
+    torch::Tensor cap_tensor;
+    archive.read("capacity", cap_tensor);
+    const auto stored_capacity = std::max<int64_t>(1, cap_tensor.item<int64_t>());
+    capacity_ = static_cast<size_t>(stored_capacity);
+
+    torch::Tensor size_tensor;
+    archive.read("size", size_tensor);
+    const int64_t size = size_tensor.item<int64_t>();
+    if (size <= 0) return;
+
+    torch::Tensor obs_tensor;
+    torch::Tensor pi_tensor;
+    torch::Tensor val_tensor;
+    archive.read("obs", obs_tensor);
+    archive.read("pi",  pi_tensor);
+    archive.read("values", val_tensor);
+
+    const auto obs_sizes = obs_tensor.sizes();
+    obs_shape_.assign(obs_sizes.begin() + 1, obs_sizes.end());
+    const auto pi_sizes = pi_tensor.sizes();
+    pi_shape_.assign(pi_sizes.begin() + 1, pi_sizes.end());
+
+    const int64_t entries = std::min<int64_t>(size, obs_tensor.size(0));
+    for (int64_t i = 0; i < entries; ++i) {
+      obs_.push_back(obs_tensor[i].clone());
+      pi_.push_back(pi_tensor[i].clone());
+      values_.push_back(val_tensor[i].item<float>());
+    }
   }
 
 private:

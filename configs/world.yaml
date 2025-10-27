@@ -34,15 +34,15 @@ world:
   record_history: false
 network:
   hidden_sizes:
-    - 256
-    - 256
+    - 128
+    - 128
 training:
-  num_iterations: 100
-  games_per_iter: 4
-  training_steps: 200
-  batch_size: 128
-  replay_capacity: 50000
-  num_simulations: 128
+  num_iterations: 10000
+  games_per_iter: 16
+  training_steps: 400
+  batch_size: 256
+  replay_capacity: 100000
+  num_simulations: 64
   cpuct: 1.5
   dirichlet_alpha: 0.3
   dirichlet_epsilon: 0.25
@@ -55,5 +55,8 @@ training:
   temperature: 1.0
   temperature_decay_steps: 30
   log_dir: runs
-  run_name: alphazero
+  run_name: alphazero2
   enable_tensorboard: true
+  checkpoint_path: runs/checkpoints/alphazero_latest.pt
+  checkpoint_interval: 100
+  resume_from_checkpoint: false

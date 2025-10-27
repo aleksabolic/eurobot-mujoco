@@ -104,6 +104,7 @@ class EurobotWorld {
     bool allow_steal() const {return allow_steal_;}
     int pantry_cap() const {return pantry_cap_;}
     const std::vector<Node>& nodes() const { return nodes_; }
+    const RewardConfig& reward_config() const { return r_; }
     int NEST_BLUE = -1, NEST_YELL = -1;
     std::vector<int> PANTRIES, PICKUPS;
 

@@ -1,8 +1,10 @@
 #include "alphazero/trainer.hpp"
 #include <algorithm>
+#include <filesystem>
 #include <iostream>
 #include <numeric>
 #include <random>
+#include <torch/serialize/archive.h>
 
 namespace alphazero {
 
@@ -53,7 +55,16 @@ void AlphaZeroTrainer::set_device(const torch::Device& device) {
 }
 
 void AlphaZeroTrainer::train() {
-  for (int it = 0; it < cfg_.num_iterations; ++it) {
+  try_resume();
+
+  if (iteration_counter_ >= cfg_.num_iterations) {
+    std::cout << "[AlphaZeroTrainer] Requested iterations already completed ("
+              << iteration_counter_ << " >= " << cfg_.num_iterations << ")." << std::endl;
+    maybe_save_checkpoint(/*force=*/true);
+    return;
+  }
+
+  for (int it = static_cast<int>(iteration_counter_); it < cfg_.num_iterations; ++it) {
     std::cout << "Iteration num: " << it << std::endl;
     double blue_return_sum = 0.0;
     double yellow_return_sum = 0.0;
@@ -73,16 +84,17 @@ void AlphaZeroTrainer::train() {
       const double yellow_mean = yellow_return_sum / denom;
 
       tb_logger_->add_scalar("train/avg_return", iteration_counter_, avg_return);
-      tb_logger_->add_scalar("rollout/blue_final_score_mean", iteration_counter_, blue_mean);
-      tb_logger_->add_scalar("rollout/yellow_final_score_mean", iteration_counter_, yellow_mean);
+      tb_logger_->add_scalar("rollout/blue_final_score_mean", iteration_counter_*160.0, blue_mean);
+      tb_logger_->add_scalar("rollout/yellow_final_score_mean", iteration_counter_*160.0, yellow_mean);
     }
 
     for (int s = 0; s < cfg_.training_steps; ++s) {
       optimize_step();
     }
     ++iteration_counter_;
-    // TODO: checkpoint (torch::save policy_->named_parameters(), etc.)
+    maybe_save_checkpoint();
   }
+  maybe_save_checkpoint(/*force=*/true);
 }
 
 std::pair<float, float> AlphaZeroTrainer::play_episode() {
@@ -96,9 +108,6 @@ std::pair<float, float> AlphaZeroTrainer::play_episode() {
   std::vector<std::vector<float>> pi_list;
 
   while (!done) {
-    // snapshot state (so MCTS can restore per sim)
-    [[maybe_unused]] const auto root_state = world_.get_state();
-
     // run MCTS from current state
     auto root = mcts_.search(world_);  // returns TreeNode by value (has children with ptrs)
 
@@ -197,6 +206,136 @@ void AlphaZeroTrainer::optimize_step() {
     tb_logger_->add_scalar("train/value_loss", train_step_counter_, value_loss_val);
   }
   ++train_step_counter_;
+}
+
+void AlphaZeroTrainer::try_resume() {
+  if (has_attempted_resume_) return;
+  has_attempted_resume_ = true;
+  if (!cfg_.resume_from_checkpoint) return;
+  if (cfg_.checkpoint_path.empty()) {
+    std::cerr << "[AlphaZeroTrainer] Resume requested but checkpoint_path is empty." << std::endl;
+    return;
+  }
+
+  if (load_checkpoint(cfg_.checkpoint_path)) {
+    resume_successful_ = true;
+    last_checkpoint_iteration_ = iteration_counter_;
+    std::cout << "[AlphaZeroTrainer] Resumed from " << cfg_.checkpoint_path
+              << " (iteration=" << iteration_counter_
+              << ", train_step=" << train_step_counter_ << ")." << std::endl;
+  } else {
+    std::cout << "[AlphaZeroTrainer] Resume requested but checkpoint '"
+              << cfg_.checkpoint_path << "' not found or invalid." << std::endl;
+  }
+}
+
+void AlphaZeroTrainer::maybe_save_checkpoint(bool force) {
+  if (cfg_.checkpoint_path.empty()) return;
+  if (!force) {
+    if (cfg_.checkpoint_interval <= 0) return;
+    if (iteration_counter_ == last_checkpoint_iteration_) return;
+    if ((iteration_counter_ % cfg_.checkpoint_interval) != 0) return;
+  }
+  if (save_checkpoint(cfg_.checkpoint_path)) {
+    last_checkpoint_iteration_ = iteration_counter_;
+    std::cout << "[AlphaZeroTrainer] Checkpoint saved to "
+              << cfg_.checkpoint_path << " (iteration=" << iteration_counter_ << ")." << std::endl;
+  }
+}
+
+bool AlphaZeroTrainer::save_checkpoint(const std::string& path) const {
+  if (path.empty()) return false;
+  try {
+    namespace fs = std::filesystem;
+    const fs::path checkpoint_path(path);
+    if (checkpoint_path.has_parent_path()) {
+      fs::create_directories(checkpoint_path.parent_path());
+    }
+
+    torch::serialize::OutputArchive archive;
+
+    torch::serialize::OutputArchive policy_archive;
+    policy_->save(policy_archive);
+    archive.write("policy", policy_archive);
+
+    torch::serialize::OutputArchive optim_archive;
+    optimizer_.save(optim_archive);
+    archive.write("optimizer", optim_archive);
+
+    std::vector<int64_t> counters_vec = {iteration_counter_, train_step_counter_};
+    auto counters = torch::tensor(counters_vec, torch::TensorOptions().dtype(torch::kInt64));
+    archive.write("counters", counters);
+
+    torch::serialize::OutputArchive replay_archive;
+    replay_.save(replay_archive);
+    archive.write("replay", replay_archive);
+
+    archive.save_to(path);
+    return true;
+  } catch (const c10::Error& e) {
+    std::cerr << "[AlphaZeroTrainer] Failed to save checkpoint (" << path << "): "
+              << e.what() << std::endl;
+  } catch (const std::exception& e) {
+    std::cerr << "[AlphaZeroTrainer] Failed to save checkpoint (" << path << "): "
+              << e.what() << std::endl;
+  }
+  return false;
+}
+
+bool AlphaZeroTrainer::load_checkpoint(const std::string& path) {
+  if (path.empty()) return false;
+  try {
+    namespace fs = std::filesystem;
+    if (!fs::exists(path)) {
+      return false;
+    }
+
+    torch::serialize::InputArchive archive;
+    archive.load_from(path);
+
+    {
+      torch::serialize::InputArchive policy_archive;
+      archive.read("policy", policy_archive);
+      policy_->load(policy_archive);
+      policy_->to(device_);
+    }
+
+    {
+      torch::serialize::InputArchive optim_archive;
+      archive.read("optimizer", optim_archive);
+      optimizer_.load(optim_archive);
+    }
+
+    try {
+      torch::Tensor counters;
+      archive.read("counters", counters);
+      auto cpu = counters.to(torch::kCPU);
+      if (cpu.numel() >= 2) {
+        iteration_counter_ = cpu[0].item<int64_t>();
+        train_step_counter_ = cpu[1].item<int64_t>();
+      }
+    } catch (const c10::Error&) {
+      iteration_counter_ = 0;
+      train_step_counter_ = 0;
+    }
+
+    try {
+      torch::serialize::InputArchive replay_archive;
+      archive.read("replay", replay_archive);
+      replay_.load(replay_archive);
+    } catch (const c10::Error& e) {
+      std::cerr << "[AlphaZeroTrainer] Warning: replay buffer missing in checkpoint: "
+                << e.what() << std::endl;
+    }
+    return true;
+  } catch (const c10::Error& e) {
+    std::cerr << "[AlphaZeroTrainer] Failed to load checkpoint (" << path << "): "
+              << e.what() << std::endl;
+  } catch (const std::exception& e) {
+    std::cerr << "[AlphaZeroTrainer] Failed to load checkpoint (" << path << "): "
+              << e.what() << std::endl;
+  }
+  return false;
 }
 
 /* --------- helpers ---------- */

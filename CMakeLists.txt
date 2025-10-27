@@ -21,12 +21,14 @@ find_package(Torch REQUIRED)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
 
 find_package(yaml-cpp REQUIRED)
+find_package(OpenCV REQUIRED COMPONENTS core imgproc highgui imgcodecs)
 
 message(STATUS "LibTorch CUDA support: ${Torch_CUDA_FOUND}")
 
 add_library(eurobot_alphazero STATIC
   src/alphazero/action_helper.cpp
   src/alphazero/eurobot_world.cpp
+  src/alphazero/eurobot_render_cv2.cpp
   src/alphazero/mcts.cpp
   src/alphazero/policy_network.cpp
   src/alphazero/trainer.cpp
@@ -36,11 +38,13 @@ add_library(eurobot_alphazero STATIC
 target_include_directories(eurobot_alphazero
   PUBLIC
     ${PROJECT_SOURCE_DIR}/include
+    ${OpenCV_INCLUDE_DIRS}
 )
 
 target_link_libraries(eurobot_alphazero
   PUBLIC
     ${TORCH_LIBRARIES}
+    ${OpenCV_LIBS}
 )
 
 set_target_properties(eurobot_alphazero PROPERTIES
@@ -62,6 +66,17 @@ target_link_libraries(eurobot_app
     yaml-cpp
 )
 
+add_executable(eurobot_eval
+  src/eurobot_eval.cpp
+)
+
+target_link_libraries(eurobot_eval
+  PRIVATE
+    eurobot_alphazero
+    yaml-cpp
+)
+
 if(MSVC)
   target_compile_definitions(eurobot_app PRIVATE _CRT_SECURE_NO_WARNINGS)
+  target_compile_definitions(eurobot_eval PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()

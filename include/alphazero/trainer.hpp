@@ -40,6 +40,9 @@ struct TrainingConfig {
   bool enable_tensorboard    = true;
   std::string log_dir        = "runs";
   std::string run_name       = "";
+  std::string checkpoint_path = "";
+  int checkpoint_interval     = 1;
+  bool resume_from_checkpoint = false;
 };
 
 class AlphaZeroTrainer {
@@ -54,6 +57,10 @@ public:
 private:
   std::pair<float, float> play_episode();
   void optimize_step();
+  bool load_checkpoint(const std::string& path);
+  bool save_checkpoint(const std::string& path) const;
+  void maybe_save_checkpoint(bool force = false);
+  void try_resume();
 
   // helpers
   int sample_action_from_visits(const std::vector<float>& visits, double temperature);
@@ -76,6 +83,9 @@ private:
   int64_t action_dim_ = 0;
   int64_t train_step_counter_ = 0;
   int64_t iteration_counter_ = 0;
+  int64_t last_checkpoint_iteration_ = -1;
+  bool has_attempted_resume_ = false;
+  bool resume_successful_ = false;
   std::unique_ptr<TensorboardLogger> tb_logger_;
 };
 

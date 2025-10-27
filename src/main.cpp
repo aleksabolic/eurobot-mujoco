@@ -157,6 +157,14 @@ int main() {
     set_scalar("enable_tensorboard", cfg.enable_tensorboard);
     set_scalar("log_dir", cfg.log_dir);
     set_scalar("run_name", cfg.run_name);
+    set_scalar("checkpoint_path", cfg.checkpoint_path);
+    set_scalar("checkpoint_interval", cfg.checkpoint_interval);
+    set_scalar("resume_from_checkpoint", cfg.resume_from_checkpoint);
+  }
+
+  if (cfg.checkpoint_path.empty() && !cfg.log_dir.empty()) {
+    const std::string run_token = cfg.run_name.empty() ? "alphazero" : cfg.run_name;
+    cfg.checkpoint_path = cfg.log_dir + "/" + run_token + "_checkpoint.pt";
   }
 
   // ---- Trainer ----
