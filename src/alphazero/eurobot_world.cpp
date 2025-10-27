@@ -107,7 +107,6 @@ EurobotWorld::EurobotWorld(Profile blue_prof,
 
   blue.tag    = "blue";   blue.profile   = std::move(blue_prof);   blue.node   = NEST_BLUE;
   yellow.tag  = "yellow"; yellow.profile = std::move(yellow_prof); yellow.node = NEST_YELL;
-  obs_buff_ = torch::zeros({(long)obs_size()}, torch::kFloat32);
   reset(seed);
 }
 
@@ -127,13 +126,15 @@ void EurobotWorld::reset(std::optional<uint64_t> seed) {
 }
 
 size_t EurobotWorld::obs_size() const {
-  return size_t(2 * N())                                   // blue/yellow one-hots
+  return size_t(2 * N())                                    // blue/yellow one-hots
        + size_t(NUM_COLORS)                                 // blue_inv
        + size_t(PANTRIES.size() * NUM_COLORS)               // pantries
-       + size_t(PICKUPS.size()  * NUM_COLORS);              // pickups
+       + size_t(PICKUPS.size()  * NUM_COLORS)               // pickups
+       + size_t(1);                                         // time remaining
 }
 
 torch::Tensor EurobotWorld::obs() const {
+  // TODO: feature engineer more obs values
   const int Nn = N();
   const size_t K = obs_size();
   auto t = torch::zeros({(long)K}, torch::kFloat32);
@@ -161,6 +162,9 @@ torch::Tensor EurobotWorld::obs() const {
   for (const auto& row : pickups) {
     for (int c = 0; c < NUM_COLORS; ++c) buf[off++] = static_cast<float>(row[c]);
   }
+
+  // time remaining
+  buf[off++] = t_left_;
 
   // make an owning tensor (clone)
   return t;
@@ -191,6 +195,7 @@ void EurobotWorld::schedule(RobotState& rob, const Action& a) {
   bool did_move = (t_move > 0.0);
   int actor_id  = (rob.tag=="blue") ? 0 : 1;
 
+  // TODO: redundant
   if (t_total <= 0.0) {
     finish_event(rob.tag, verb, node, color, qty, did_move);
     return;

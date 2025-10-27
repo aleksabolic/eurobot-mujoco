@@ -315,6 +315,8 @@ int main(int argc, char** argv) {
       }
     }
 
+    std::cout<< "Made: "<< step << " number of steps."<<std::endl;
+
     if (writer.isOpened()) {
       writer.release();
       std::cout << "Saved video: " << video_path << std::endl;

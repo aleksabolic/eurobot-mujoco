@@ -50,6 +50,9 @@ struct Profile {
   int  capacity = 0;
   int  max_action_qty = 0;
   bool can_flip = false;
+  // TODO: move travel time as trapezoid to private world function
+  // and just pass vmax and amax as robot profile args
+  // handle time is ok
   std::function<double(double /*distance*/)> travel_time;
   std::function<double(Verb /*verb*/, int /*qty*/)> handle_time;
 };
@@ -100,6 +103,7 @@ class EurobotWorld {
     std::pair<float,float> final_scores_norm() const;
 
     std::vector<Action> action_space() const;
+    // TODO: rename these badly named props
     int N() const { return static_cast<int>(nodes_.size()); }
     bool allow_steal() const {return allow_steal_;}
     int pantry_cap() const {return pantry_cap_;}
@@ -144,7 +148,6 @@ class EurobotWorld {
     std::vector<float> D_; // row-major NxN
 
     std::vector<int> pantry_idx_, pickup_idx_; // size N()
-    mutable torch::Tensor obs_buff_;
 
     int pantry_cap_ = PANTRY_CAP;
 };
