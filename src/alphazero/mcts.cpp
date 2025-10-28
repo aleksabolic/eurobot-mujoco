@@ -26,6 +26,11 @@ TreeNode MCTS::search(eurobot::EurobotWorld &world) {
     auto root = std::make_shared<TreeNode>(1.0f);
 
     expand(world, root);
+    if (root->children.empty()) {
+        world.set_state(root_state);
+        return *root;
+    }
+
     add_dirichlet_noise(root);
 
     for(int i = 0; i < config_.num_simulations; i++){
@@ -52,15 +57,16 @@ double MCTS::expand(eurobot::EurobotWorld &world, std::shared_ptr<TreeNode>& nod
                 "policy logits size != action space size");
 
     // mask it with legal_action_mask
-    auto logit_mask = world.logit_mask();
+    auto logit_mask = world.logit_mask().to(logits.device());
     auto masked_logits = logits + logit_mask;
     masked_logits = torch::where(torch::isfinite(masked_logits),
                                  masked_logits,
                                  torch::full_like(masked_logits, -1e9f));
     auto priors = torch::softmax(masked_logits, -1).contiguous();
+    auto priors_cpu = priors.to(torch::kCPU);
 
     const int64_t A = priors.size(0);
-    auto acc = priors.data_ptr<float>(); ;
+    auto acc = priors_cpu.data_ptr<float>();
 
     node->children.clear();
     node->children.reserve(A);
@@ -116,6 +122,10 @@ void MCTS::simulate(eurobot::EurobotWorld &world, const std::shared_ptr<TreeNode
             break;
         }
         auto [action_idx, child] = select_child(node);
+        if (action_idx < 0 || !child) {
+            value = world.final_scores_norm().first;  
+            break;
+        }
         const auto &action = world.action_space[action_idx];
         const bool done = world.step_blue(action);
 
