@@ -180,7 +180,6 @@ bool EurobotWorld::check_valid_action(int node, int color, int qty, const RobotS
 
 void EurobotWorld::schedule(RobotState& rob, const Action& a) {
   int verb  = a.verb, node = a.node, color = a.color, qty = a.qty;
-  // TODO: this sometimes happens, check why and fix it
   if (!check_valid_action(node, color, qty, rob)) {
     throw std::runtime_error("Invalid action");
   }
@@ -196,7 +195,6 @@ void EurobotWorld::schedule(RobotState& rob, const Action& a) {
   bool did_move = (t_move > 0.0);
   int actor_id  = (rob.tag=="blue") ? 0 : 1;
 
-  // TODO: redundant
   if (t_total <= 0.0) {
     finish_event(rob.tag, verb, node, color, qty, did_move);
     return;

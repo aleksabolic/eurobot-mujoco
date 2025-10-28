@@ -51,8 +51,6 @@ double MCTS::expand(eurobot::EurobotWorld &world, std::shared_ptr<TreeNode>& nod
     TORCH_CHECK(logits.size(0) == (long)action_helper_.actions().size(),
                 "policy logits size != action space size");
 
-    // TODO: collect multi-head logits into one [#action_size] tensor
-
     // mask it with legal_action_mask
     auto logit_mask = action_helper_.logit_mask(world);
     auto masked_logits = logits + logit_mask;

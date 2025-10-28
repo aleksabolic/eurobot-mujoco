@@ -14,7 +14,7 @@ torch::optim::AdamOptions make_adam_options(const TrainingConfig& cfg) {
   opt.weight_decay(cfg.weight_decay);
   return opt;
 }
-// TODO: move this to ctor
+
 MCTSConfig make_mcts_cfg(const TrainingConfig& cfg) {
   MCTSConfig m;
   m.num_simulations   = cfg.num_simulations;
