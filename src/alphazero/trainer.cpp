@@ -15,6 +15,7 @@ torch::optim::AdamOptions make_adam_options(const TrainingConfig& cfg) {
   return opt;
 }
 
+// TODO: pass separate mcts config in ctor
 MCTSConfig make_mcts_cfg(const TrainingConfig& cfg) {
   MCTSConfig m;
   m.num_simulations   = cfg.num_simulations;
@@ -32,13 +33,13 @@ AlphaZeroTrainer::AlphaZeroTrainer(PolicyNetwork network,
   : cfg_(cfg),
     policy_(std::move(network)),
     world_(std::move(world)),
-    action_helper_(world_),
     replay_(cfg_.replay_capacity),
-    mcts_(make_mcts_cfg(cfg_), policy_, action_helper_),
+    mcts_cfg_(make_mcts_cfg(cfg)), 
+    mcts_(mcts_cfg_, policy_),
     optimizer_(policy_->parameters(), make_adam_options(cfg_)) {
 
   TORCH_CHECK(policy_, "AlphaZeroTrainer: policy network must be non-null");
-  action_dim_ = static_cast<int64_t>(action_helper_.actions().size());
+  action_dim_ = static_cast<int64_t>(world_.action_space.size());
 
   if (cfg_.enable_tensorboard && !cfg_.log_dir.empty()) {
     try {
@@ -100,8 +101,7 @@ void AlphaZeroTrainer::train() {
 
 std::pair<float, float> AlphaZeroTrainer::play_episode() {
   policy_->eval();
-
-  world_.reset();                 // restart match
+  world_.reset();
   bool done = false;
   int step_idx = 0;
 
@@ -123,7 +123,7 @@ std::pair<float, float> AlphaZeroTrainer::play_episode() {
     }
     if (total_visits <= 0) {
       // fallback: legal mask → uniform over legal
-      auto legal = action_helper_.legal_mask(world_);
+      auto legal = world_.legal_mask();
       auto legal_cpu = legal.to(torch::kCPU);
       visits.assign(action_dim_, 0.0f);
       for (int64_t i = 0; i < legal_cpu.numel(); ++i)
@@ -141,7 +141,7 @@ std::pair<float, float> AlphaZeroTrainer::play_episode() {
     // select action with temperature schedule
     const double T = select_temperature(step_idx);
     const int action_idx = sample_action_from_visits(visits, T);
-    const auto& action = action_helper_.action_by_index(action_idx);
+    const auto& action = world_.action_space[action_idx];
 
     // step environment (Blue)
     done = world_.step_blue(action) || step_idx > cfg_.max_env_steps;

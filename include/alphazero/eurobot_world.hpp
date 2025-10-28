@@ -97,7 +97,6 @@ class EurobotWorld {
     std::pair<float,float> final_scores() const;
     std::pair<float,float> final_scores_norm() const;
 
-    std::vector<Action> action_space() const;
     // TODO: rename these badly named props
     int N() const { return static_cast<int>(nodes_.size()); }
     bool allow_steal() const {return allow_steal_;}
@@ -116,6 +115,7 @@ class EurobotWorld {
     // TODO: rename this 
     int NEST_BLUE = -1, NEST_YELL = -1; 
     std::vector<int> PANTRIES, PICKUPS;
+    std::vector<Action> action_space;
 
     // Scripted yellow hook: (actor_tag, world, robot, rng) -> optional<Action>
     std::function<std::optional<Action>(const std::string&,
@@ -127,6 +127,12 @@ class EurobotWorld {
     RobotState blue, yellow;
     std::vector<std::array<int16_t,NUM_COLORS>> pantries, pickups;
     int nest_blue = 0, nest_yellow = 0;
+
+    // Bool mask (shape: [num_actions]) over all possible actions
+    torch::Tensor legal_mask(bool blue_turn = true) const;
+
+    // Add to logits: 0 for legal, -inf (or neg_large) for illegal
+    torch::Tensor logit_mask(bool blue_turn = true, float neg_large = -1e9f) const;
 
   private:
     void schedule(RobotState& rob, const Action& a);
@@ -141,6 +147,7 @@ class EurobotWorld {
                                            std::vector<int>& pantries,
                                            std::vector<int>& pickups);
     static std::vector<float> build_pairwise_D(const std::vector<Node>& nodes);
+    void build_action_space();
 
   private:
     RewardConfig r_;

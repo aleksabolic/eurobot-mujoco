@@ -9,8 +9,8 @@
 
 namespace alphazero {
 
-MCTS::MCTS(MCTSConfig config, PolicyNetwork &network, ActionHelper &action_helper)
-    : config_(std::move(config)), policy_network_(network), action_helper_(action_helper) {
+MCTS::MCTS(MCTSConfig config, PolicyNetwork &network)
+    : config_(std::move(config)), policy_network_(network) {
   if (config_.num_simulations <= 0) {
     throw std::invalid_argument("MCTS: simulations must be positive");
   }
@@ -48,11 +48,11 @@ double MCTS::expand(eurobot::EurobotWorld &world, std::shared_ptr<TreeNode>& nod
     logits = logits.squeeze(0);
     TORCH_CHECK(logits.dim() == 1, "policy logits must be 1D [A]");
     TORCH_CHECK(logits.dtype() == torch::kFloat32, "policy logits must be float32");
-    TORCH_CHECK(logits.size(0) == (long)action_helper_.actions().size(),
+    TORCH_CHECK(logits.size(0) == (long)world.action_space.size(),
                 "policy logits size != action space size");
 
     // mask it with legal_action_mask
-    auto logit_mask = action_helper_.logit_mask(world);
+    auto logit_mask = world.logit_mask();
     auto masked_logits = logits + logit_mask;
     masked_logits = torch::where(torch::isfinite(masked_logits),
                                  masked_logits,
@@ -116,7 +116,7 @@ void MCTS::simulate(eurobot::EurobotWorld &world, const std::shared_ptr<TreeNode
             break;
         }
         auto [action_idx, child] = select_child(node);
-        const auto &action = action_helper_.action_by_index(action_idx);
+        const auto &action = world.action_space[action_idx];
         const bool done = world.step_blue(action);
 
         path.push_back(child);

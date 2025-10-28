@@ -54,11 +54,9 @@ std::vector<float> EurobotWorld::build_pairwise_D(const std::vector<Node>& nodes
   return D;
 }
 
-std::vector<Action> EurobotWorld::action_space() const {
+void EurobotWorld::build_action_space() {
   const int n_verbs  = 4;
   const int max_qty  = blue.profile.max_action_qty;
-
-  std::vector<Action> actions;
 
   for (int v = 0; v < n_verbs; ++v) {
     const Verb verb = static_cast<Verb>(v);
@@ -83,12 +81,11 @@ std::vector<Action> EurobotWorld::action_space() const {
     for (int n : nodes) {
       for (int c = 0; c < NUM_COLORS; ++c) {
         for (int q = 1; q <= max_qty; ++q) {
-          actions.push_back(Action{ v, n, c, q });
+          action_space.push_back(Action{ v, n, c, q });
         }
       }
     }
   }
-  return actions;
 }
 
 EurobotWorld::EurobotWorld(RobotProfile blue_prof,
@@ -108,6 +105,8 @@ EurobotWorld::EurobotWorld(RobotProfile blue_prof,
 
   blue.tag    = "blue";   blue.profile   = std::move(blue_prof);   blue.node   = NEST_BLUE;
   yellow.tag  = "yellow"; yellow.profile = std::move(yellow_prof); yellow.node = NEST_YELL;
+
+  build_action_space();
   reset(seed);
 }
 
@@ -366,6 +365,80 @@ void EurobotWorld::set_state(const EurobotState& s) {
   nest_blue = s.nest_blue;
   nest_yellow = s.nest_yellow;
   blue = s.blue; yellow = s.yellow;
+}
+
+
+// -------- Action masks ---------
+torch::Tensor EurobotWorld::legal_mask(bool blue_turn) const {
+  const auto& rob = blue_turn ? blue : yellow;
+  const int max_qty = blue_turn ? blue.profile.max_action_qty : yellow.profile.max_action_qty;
+  const int nest_id = blue_turn ? NEST_BLUE : NEST_YELL;
+
+  auto mask = torch::empty({static_cast<long>(action_space.size())},
+                           torch::TensorOptions().dtype(torch::kBool));
+  auto* mask_ptr = mask.data_ptr<bool>();
+
+  const int inv_sum = int(rob.inv[0]) + int(rob.inv[1]);
+  const int room_total = std::max(0, rob.profile.capacity - inv_sum);
+
+  auto sum2 = [](const std::array<int16_t,2>& a){ return int(a[0]) + int(a[1]); };
+
+  for (size_t i = 0; i < action_space.size(); ++i) {
+    const auto& a = action_space[i];
+    const auto verb  = static_cast<Verb>(a.verb);
+    const int  node  = a.node;
+    const int  color = a.color;
+    const int  qty   = a.qty;
+
+    bool legal = false;
+    if (qty < 1 || qty > max_qty) { mask_ptr[i] = false; continue; }
+
+    switch (verb) {
+      case Verb::PICK: {
+        // check if the node is a pickup node
+        const int idx = pickup_idx_[node];
+        if (idx < 0) break;
+        const int available = pickups[idx][color];
+        legal = (available >= qty && room_total >= qty);
+      } break;
+
+      case Verb::PLACE: {
+        const int have = rob.inv[color];
+        if (node == nest_id) {
+          const int nest_rem = std::max(0, NEST_CAP - (blue_turn ? nest_blue : nest_yellow));
+          legal = (qty <= nest_rem && qty <= have);
+          break;
+        }
+        const int pidx = pantry_idx_[node];
+        if (pidx < 0) break;
+        const int room = std::max(0, PANTRY_CAP - sum2(pantries[pidx]));
+        legal = (qty <= room && qty <= have);
+      } break;
+
+      case Verb::FLIP: {
+        // Flip ignores node.
+        legal = (rob.profile.can_flip && rob.inv[color] >= qty);
+      } break;
+
+      case Verb::STEAL: {
+        if (!allow_steal_) break;
+        const int pidx = pantry_idx_[node];
+        if (pidx < 0) break;
+        const int have = pantries[pidx][color];
+        legal = (qty <= room_total && qty <= have);
+      } break;
+    }
+
+    mask_ptr[i] = legal;
+  }
+
+  return mask;
+}
+
+// Add to logits: 0 for legal, -inf (or neg_large) for illegal
+torch::Tensor EurobotWorld::logit_mask(bool blue_turn, float neg_large) const {
+    auto legal = legal_mask(blue_turn).to(torch::kFloat32);
+    return (1.0f - legal) * neg_large;  // 0 for legal, -inf-ish for illegal
 }
 
 } // namespace euro

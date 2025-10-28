@@ -26,7 +26,6 @@ find_package(OpenCV REQUIRED COMPONENTS core imgproc highgui imgcodecs)
 message(STATUS "LibTorch CUDA support: ${Torch_CUDA_FOUND}")
 
 add_library(eurobot_alphazero STATIC
-  src/alphazero/action_helper.cpp
   src/alphazero/eurobot_world.cpp
   src/alphazero/eurobot_render_cv2.cpp
   src/alphazero/mcts.cpp
@@ -66,17 +65,17 @@ target_link_libraries(eurobot_app
     yaml-cpp
 )
 
-add_executable(eurobot_eval
-  src/eurobot_eval.cpp
-)
+# add_executable(eurobot_eval
+#   src/eurobot_eval.cpp
+# )
 
-target_link_libraries(eurobot_eval
-  PRIVATE
-    eurobot_alphazero
-    yaml-cpp
-)
+# target_link_libraries(eurobot_eval
+#   PRIVATE
+#     eurobot_alphazero
+#     yaml-cpp
+# )
 
 if(MSVC)
   target_compile_definitions(eurobot_app PRIVATE _CRT_SECURE_NO_WARNINGS)
-  target_compile_definitions(eurobot_eval PRIVATE _CRT_SECURE_NO_WARNINGS)
+  # target_compile_definitions(eurobot_eval PRIVATE _CRT_SECURE_NO_WARNINGS)
 endif()

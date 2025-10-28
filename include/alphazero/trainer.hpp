@@ -6,7 +6,6 @@
 #include <torch/torch.h>
 
 #include "alphazero/policy_network.hpp"
-#include "alphazero/action_helper.hpp"
 #include "alphazero/eurobot_world.hpp"
 #include "alphazero/mcts.hpp"
 #include "alphazero/replay_buffer.hpp"
@@ -70,12 +69,12 @@ private:
 
 private:
   TrainingConfig cfg_;
+  MCTSConfig mcts_cfg_;
   torch::Device device_ = torch::kCPU;
 
   // ownership
   PolicyNetwork policy_;
   eurobot::EurobotWorld world_;
-  ActionHelper action_helper_;
   ReplayBuffer replay_;
 
   MCTS mcts_;

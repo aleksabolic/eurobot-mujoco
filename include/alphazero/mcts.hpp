@@ -8,7 +8,6 @@
 #include <torch/torch.h>
 
 #include "alphazero/policy_network.hpp"
-#include "alphazero/action_helper.hpp"
 #include "alphazero/eurobot_world.hpp"
 
 namespace alphazero {
@@ -36,14 +35,13 @@ struct TreeNode {
 
 class MCTS {
  public:
-  explicit MCTS(MCTSConfig config, PolicyNetwork &network, ActionHelper &action_helper);
+  explicit MCTS(MCTSConfig config, PolicyNetwork &network);
 
   TreeNode search(eurobot::EurobotWorld &world);
 
  private:
   MCTSConfig config_;
   PolicyNetwork &policy_network_;
-  ActionHelper &action_helper_;
 
   void simulate(eurobot::EurobotWorld &world, const std::shared_ptr<TreeNode>& root);
   double expand(eurobot::EurobotWorld &world, std::shared_ptr<TreeNode>& node);

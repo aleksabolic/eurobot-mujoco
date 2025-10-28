@@ -184,7 +184,7 @@ int main(int argc, char** argv) {
   eu::EurobotWorld world = make_world(cfg_yaml);
 
   const int64_t obs_dim    = world.obs().size(0);
-  const int64_t action_dim = static_cast<int64_t>(world.action_space().size());
+  const int64_t action_dim = static_cast<int64_t>(world.action_space.size());
 
   az::PolicyNetwork net = make_network(cfg_yaml, obs_dim, action_dim, device);
   az::TrainingConfig train_cfg = load_training(cfg_yaml);
