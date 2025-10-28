@@ -91,8 +91,8 @@ std::vector<Action> EurobotWorld::action_space() const {
   return actions;
 }
 
-EurobotWorld::EurobotWorld(Profile blue_prof,
-                           Profile yellow_prof,
+EurobotWorld::EurobotWorld(RobotProfile blue_prof,
+                           RobotProfile yellow_prof,
                            RewardConfig rewards,
                            bool allow_steal,
                            uint64_t seed,
@@ -100,6 +100,7 @@ EurobotWorld::EurobotWorld(Profile blue_prof,
 : r_(rewards), record_history_(record_history), allow_steal_(allow_steal), rng_(seed) {
   nodes_ = build_nodes(NEST_BLUE, NEST_YELL, PANTRIES, PICKUPS);
   D_     = build_pairwise_D(nodes_);
+
   pantry_idx_.assign(N(), -1);
   pickup_idx_.assign(N(), -1);
   for (int j=0;j<(int)PANTRIES.size();++j) pantry_idx_[PANTRIES[j]] = j;
@@ -233,13 +234,12 @@ void EurobotWorld::advance_until_next() {
 
 void EurobotWorld::finish_event(const std::string& actor_tag, int verb_i, int node, int color, int qty, bool did_move) {
   RobotState& rob = (actor_tag=="blue") ? blue : yellow;
-  const Profile& prof = rob.profile;
+  const RobotProfile& prof = rob.profile;
   if (did_move) rob.node = node;
 
   Verb verb = static_cast<Verb>(verb_i);
   if (verb == Verb::PICK) {
-    int idx = pantry_idx_[node]; // NOTE: in Python PICKs come from PICKUPS, here we map separately:
-    idx = pickup_idx_[node];
+    int idx = pickup_idx_[node];
     if (idx != -1) {
       int can_take = pickups[idx][color];
       int inv_sum = rob.inv[0] + rob.inv[1];
@@ -257,7 +257,7 @@ void EurobotWorld::finish_event(const std::string& actor_tag, int verb_i, int no
     int idx = pantry_idx_[node];
     if (idx != -1) {
       int total_here = pantries[idx][0] + pantries[idx][1];
-      int room = std::max(0, pantry_cap_ - total_here);
+      int room = std::max(0, PANTRY_CAP - total_here);
       int put = std::max(0, std::min({qty, have, room}));
       if (put > 0) {
         pantries[idx][color] += static_cast<int16_t>(put);
@@ -358,8 +358,6 @@ EurobotState EurobotWorld::get_state() const {
   s.nest_blue = nest_blue;
   s.nest_yellow = nest_yellow;
   s.blue = blue; s.yellow = yellow;
-  s.allow_steal = allow_steal_;
-  s.pantry_cap = pantry_cap_;
   return s;
 }
 
@@ -370,8 +368,6 @@ void EurobotWorld::set_state(const EurobotState& s) {
   nest_blue = s.nest_blue;
   nest_yellow = s.nest_yellow;
   blue = s.blue; yellow = s.yellow;
-  allow_steal_ = s.allow_steal;
-  pantry_cap_ = s.pantry_cap;
 }
 
 } // namespace euro

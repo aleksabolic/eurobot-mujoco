@@ -134,6 +134,7 @@ void MCTS::simulate(eurobot::EurobotWorld &world, const std::shared_ptr<TreeNode
     for (int i = (int)path.size() - 1; i >= 0; --i) {
         path[i]->vis_count += 1;
         path[i]->value_sum += value;
+        value *= config_.gamma;
     }
 }
 

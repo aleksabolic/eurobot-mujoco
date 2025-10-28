@@ -21,6 +21,7 @@ MCTSConfig make_mcts_cfg(const TrainingConfig& cfg) {
   m.cpuct             = cfg.cpuct;
   m.dirichlet_alpha   = cfg.dirichlet_alpha;
   m.dirichlet_epsilon = cfg.dirichlet_epsilon;
+  m.gamma             = cfg.gamma;
   return m;
 }
 } // namespace

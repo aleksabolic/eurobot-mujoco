@@ -26,6 +26,7 @@ struct TrainingConfig {
   double cpuct               = 1.5;
   double dirichlet_alpha     = 0.3;
   double dirichlet_epsilon   = 0.25;
+  double gamma               = 0.995;
 
   double learning_rate       = 1e-3;
   double weight_decay        = 1e-4;

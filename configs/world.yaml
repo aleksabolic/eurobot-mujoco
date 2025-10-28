@@ -36,26 +36,27 @@ network:
     - 128
 training:
   num_iterations: 10000
-  games_per_iter: 16
-  training_steps: 400
-  batch_size: 256
+  games_per_iter: 128
+  training_steps: 1500
+  batch_size: 2048
   replay_capacity: 100000
-  num_simulations: 64
-  max_env_steps: 50
+  num_simulations: 256
+  max_env_steps: 400
   cpuct: 1.5
-  dirichlet_alpha: 0.3
-  dirichlet_epsilon: 0.25
-  learning_rate: 0.001
+  dirichlet_alpha: 0.04  #~10/|A|
+  dirichlet_epsilon: 0.2
+  gamma: 0.995
+  learning_rate: 3e-4
   weight_decay: 0.0001
   max_grad_norm: 5.0
   policy_loss_weight: 1.0
-  value_loss_weight: 1.0
-  entropy_weight: 0.0
+  value_loss_weight: 0.8
+  entropy_weight: 1e-3
   temperature: 1.0
   temperature_decay_steps: 30
   log_dir: runs
-  run_name: alphazero_baseline
+  run_name: alphazero_baseline2
   enable_tensorboard: true
-  checkpoint_path: runs/checkpoints/alphazero_baseline.pt
+  checkpoint_path: runs/checkpoints/alphazero_baseline2.pt
   checkpoint_interval: 100
   resume_from_checkpoint: false

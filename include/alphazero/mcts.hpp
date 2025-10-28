@@ -18,6 +18,7 @@ struct MCTSConfig {
   double cpuct = 1.25;
   double dirichlet_alpha = 0.3;
   double dirichlet_epsilon = 0.25;
+  double gamma = 0.995;
 };
 
 struct TreeNode {

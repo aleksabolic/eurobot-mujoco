@@ -46,8 +46,7 @@ struct RewardConfig {
   float finish_in_nest_bonus = 10.0;
 };
 
-// TODO: rename this 
-struct Profile {
+struct RobotProfile {
   int  capacity = 0;
   int  max_action_qty = 0;
   bool can_flip = false;
@@ -64,8 +63,8 @@ struct Event {
 
 struct RobotState {
   std::string tag;
-  Profile profile;
-  int node = 0;
+  RobotProfile profile;
+  int node = 0; // TODO: rename to curr_node
   std::array<int16_t,NUM_COLORS> inv{0,0};
   std::optional<Event> event;
 };
@@ -76,14 +75,12 @@ struct EurobotState {
   std::vector<std::array<int16_t,NUM_COLORS>> pickups;
   int nest_blue = 0, nest_yellow = 0;
   RobotState blue, yellow;
-  bool allow_steal = true;
-  int pantry_cap = PANTRY_CAP;
 };
 
 class EurobotWorld {
   public:
-    EurobotWorld(Profile blue_prof,
-                 Profile yellow_prof,
+    EurobotWorld(RobotProfile blue_prof,
+                 RobotProfile yellow_prof,
                  RewardConfig rewards,
                  bool allow_steal = true,
                  uint64_t seed = 0,
@@ -104,10 +101,20 @@ class EurobotWorld {
     // TODO: rename these badly named props
     int N() const { return static_cast<int>(nodes_.size()); }
     bool allow_steal() const {return allow_steal_;}
-    int pantry_cap() const {return pantry_cap_;}
+    int pantry_cap() const {return PANTRY_CAP;}
+    int nest_cap() const {return NEST_CAP;}
+    int num_colors() const {return NUM_COLORS;}
+
+    // returns -1 if node at idx is not pantry and otherwise index of same pantry relative to world.pantries
+    int pantry_idx(int idx) const {return pantry_idx_[idx];} 
+    // returns -1 if node at idx is not pickup and otherwise index of same pickup relative to world.pickups
+    int pickup_idx(int idx) const {return pickup_idx_[idx];}
+
     const std::vector<Node>& nodes() const { return nodes_; }
     const RewardConfig& reward_config() const { return r_; }
-    int NEST_BLUE = -1, NEST_YELL = -1;
+
+    // TODO: rename this 
+    int NEST_BLUE = -1, NEST_YELL = -1; 
     std::vector<int> PANTRIES, PICKUPS;
 
     // Scripted yellow hook: (actor_tag, world, robot, rng) -> optional<Action>
@@ -116,6 +123,7 @@ class EurobotWorld {
                                         const RobotState&,
                                         std::mt19937_64&)> yellow_policy;
 
+    // TODO: rename                                   
     RobotState blue, yellow;
     std::vector<std::array<int16_t,NUM_COLORS>> pantries, pickups;
     int nest_blue = 0, nest_yellow = 0;
@@ -146,7 +154,5 @@ class EurobotWorld {
     std::vector<float> D_; // row-major NxN
 
     std::vector<int> pantry_idx_, pickup_idx_; // size N()
-
-    int pantry_cap_ = PANTRY_CAP;
 };
 }

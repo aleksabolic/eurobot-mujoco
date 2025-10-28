@@ -150,12 +150,12 @@ std::filesystem::path make_video_path(const std::filesystem::path& base, int epi
   return stem;
 }
 
-eurobot::Profile load_profile(const YAML::Node& node) {
+eurobot::RobotProfile load_profile(const YAML::Node& node) {
   if (!node) {
     throw std::runtime_error("Missing profile configuration");
   }
 
-  eurobot::Profile p;
+  eurobot::RobotProfile p;
   p.capacity = node["capacity"].as<int>();
   p.max_action_qty = node["max_action_qty"].as<int>();
   p.can_flip = node["can_flip"].as<bool>();
@@ -213,8 +213,8 @@ WorldBundle make_world(const YAML::Node& config) {
     throw std::runtime_error("profiles.blue/yellow missing in configs/world.yaml");
   }
 
-  eurobot::Profile blue_prof = load_profile(profiles["blue"]);
-  eurobot::Profile yellow_prof = load_profile(profiles["yellow"]);
+  eurobot::RobotProfile blue_prof = load_profile(profiles["blue"]);
+  eurobot::RobotProfile yellow_prof = load_profile(profiles["yellow"]);
 
   eurobot::RewardConfig rewards{};
   if (const auto reward = config["reward"]) {

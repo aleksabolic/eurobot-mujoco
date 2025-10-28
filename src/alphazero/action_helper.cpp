@@ -8,8 +8,8 @@ namespace alphazero {
 
 torch::Tensor ActionHelper::legal_mask(const eurobot::EurobotWorld& world, bool blue_turn) const {
   const auto& rob = blue_turn ? world.blue   : world.yellow;
-  const int   max_qty = blue_turn ? max_qty_blue_ : max_qty_yell_;
-  const int   nest_id = blue_turn ? nest_blue_     : nest_yell_;
+  const int   max_qty = blue_turn ? world.blue.profile.max_action_qty : world.yellow.profile.max_action_qty;
+  const int   nest_id = blue_turn ? world.NEST_BLUE  : world.NEST_YELL;
 
   auto mask = torch::empty({static_cast<long>(actions_.size())},
                            torch::TensorOptions().dtype(torch::kBool));
@@ -33,7 +33,7 @@ torch::Tensor ActionHelper::legal_mask(const eurobot::EurobotWorld& world, bool 
     switch (verb) {
       case eurobot::Verb::PICK: {
         // check if the node is a pickup node
-        const int idx = (node >= 0 && node < (int)node_to_pickup_idx_.size()) ? node_to_pickup_idx_[node] : -1;
+        const int idx = world.pickup_idx(node);
         if (idx < 0) break;
         const int available = world.pickups[idx][color];
         legal = (available >= qty && room_total >= qty);
@@ -42,13 +42,13 @@ torch::Tensor ActionHelper::legal_mask(const eurobot::EurobotWorld& world, bool 
       case eurobot::Verb::PLACE: {
         const int have = rob.inv[color];
         if (node == nest_id) {
-          const int nest_rem = std::max(0, eurobot::NEST_CAP - (blue_turn ? world.nest_blue : world.nest_yellow));
+          const int nest_rem = std::max(0, world.nest_cap() - (blue_turn ? world.nest_blue : world.nest_yellow));
           legal = (qty <= nest_rem && qty <= have);
           break;
         }
-        const int pidx = (node >= 0 && node < (int)node_to_pantry_idx_.size()) ? node_to_pantry_idx_[node] : -1;
+        const int pidx = world.pantry_idx(node);
         if (pidx < 0) break;
-        const int room = std::max(0, pantry_cap_ - sum2(world.pantries[pidx]));
+        const int room = std::max(0, world.pantry_cap() - sum2(world.pantries[pidx]));
         legal = (qty <= room && qty <= have);
       } break;
 
@@ -58,8 +58,8 @@ torch::Tensor ActionHelper::legal_mask(const eurobot::EurobotWorld& world, bool 
       } break;
 
       case eurobot::Verb::STEAL: {
-        if (!allow_steal_) break;
-        const int pidx = (node >= 0 && node < (int)node_to_pantry_idx_.size()) ? node_to_pantry_idx_[node] : -1;
+        if (!world.allow_steal()) break;
+        const int pidx = world.pantry_idx(node);
         if (pidx < 0) break;
         const int have = world.pantries[pidx][color];
         legal = (qty <= room_total && qty <= have);
