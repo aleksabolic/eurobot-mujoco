@@ -59,4 +59,4 @@ training:
   enable_tensorboard: true
   checkpoint_path: runs/checkpoints/alphazero_baseline2.pt
   checkpoint_interval: 100
-  resume_from_checkpoint: false
+  resume_from_checkpoint: true

@@ -4,6 +4,7 @@
 #include <iostream>
 #include <numeric>
 #include <random>
+#include <future>
 #include <torch/serialize/archive.h>
 
 namespace alphazero {
@@ -66,28 +67,69 @@ void AlphaZeroTrainer::train() {
     return;
   }
 
-  for (int it = static_cast<int>(iteration_counter_); it < cfg_.num_iterations; ++it) {
-    std::cout << "Iteration num: " << it << std::endl;
-    double blue_return_sum = 0.0;
-    double yellow_return_sum = 0.0;
-    int episodes_collected = 0;
+  // ensure Torch is single-threaded inside workers
+  at::set_num_threads(1);
+  at::set_num_interop_threads(1);
 
-    for (int g = 0; g < cfg_.games_per_iter; ++g) {
-      const auto scores = play_episode();
-      blue_return_sum += scores.first;
-      yellow_return_sum += scores.second;
-      ++episodes_collected;
+  // choose worker count
+  const int W = std::max(1u, std::thread::hardware_concurrency());
+  // const int W = std::min(cfg_.games_per_iter, (int)std::max(1u, std::thread::hardware_concurrency()));
+  workers_.reserve(W);
+  for (int i = 0; i < W; ++i) {
+    workers_.emplace_back(world_, policy_, mcts_cfg_);
+  }
+
+
+  for (int it = static_cast<int>(iteration_counter_); it < cfg_.num_iterations; ++it) {
+    std::cout<<"Iteration num: "<<it<<std::endl;
+    const int G = cfg_.games_per_iter;
+    const int base = G / W, rem = G % W;
+
+    std::vector<std::future<WorkerBatch>> futs;
+    futs.reserve(W);
+
+    const auto root_state = world_.get_state(); // snapshot once
+
+    for (int i = 0; i < W; ++i) {
+      const int episodes_for_this_worker = base + (i < rem ? 1 : 0);
+      if (episodes_for_this_worker == 0) continue;
+
+      futs.emplace_back(std::async(std::launch::async, [this, i, episodes_for_this_worker, root_state]{
+        auto& wk = workers_[i];
+        WorkerBatch wb;
+        wb.traj.reserve(episodes_for_this_worker * 64);
+
+        for (int e = 0; e < episodes_for_this_worker; ++e) {
+          wk.world.set_state(root_state);              // TODO: swap with world.reset()
+          auto traj = play_episode_collect(wk.world, wk.mcts);
+          if (!traj.empty()) {
+            ++wb.episodes;
+            wb.blue_sum += traj.front().value;         
+            wb.traj.insert(wb.traj.end(),
+                          std::make_move_iterator(traj.begin()),
+                          std::make_move_iterator(traj.end()));
+          }
+        }
+        return wb;
+      }));
+    }
+
+    int episodes_collected = 0;
+    double blue_return_sum = 0.0;  
+
+    for (auto& f : futs) {
+      auto wb = f.get();
+      episodes_collected += wb.episodes;
+      blue_return_sum     += wb.blue_sum;
+      for (auto &t : wb.traj) {
+        replay_.add(t.obs.to(device_), t.pi.to(device_), t.value);
+      }
     }
 
     if (tb_logger_ && episodes_collected > 0) {
-      const double denom = static_cast<double>(episodes_collected);
-      const double avg_return = blue_return_sum / denom;
-      const double blue_mean = blue_return_sum / denom;
-      const double yellow_mean = yellow_return_sum / denom;
-
+      const double avg_return = blue_return_sum / (double)episodes_collected;
       tb_logger_->add_scalar("train/avg_return", iteration_counter_, avg_return);
-      tb_logger_->add_scalar("rollout/blue_final_score_mean", iteration_counter_, blue_mean*160.0);
-      tb_logger_->add_scalar("rollout/yellow_final_score_mean", iteration_counter_, yellow_mean*160.0);
+      tb_logger_->add_scalar("rollout/blue_final_score_mean", iteration_counter_, avg_return * 160.0);
     }
 
     for (int s = 0; s < cfg_.training_steps; ++s) {
@@ -163,6 +205,50 @@ std::pair<float, float> AlphaZeroTrainer::play_episode() {
   }
   return scores;
 }
+
+std::vector<Transition> AlphaZeroTrainer::play_episode_collect(eurobot::EurobotWorld& world, MCTS& mcts) {
+  policy_->eval();
+  world.reset();
+  bool done = false;
+  int step_idx = 0;
+
+  std::vector<torch::Tensor> obs_list;
+  std::vector<std::vector<float>> pi_list;
+
+  while (!done) {
+    auto root = mcts.search(world);
+
+    std::vector<float> visits(action_dim_, 0.0f);
+    int total_visits = 0;
+    for (const auto& kv : root.children) {
+      visits[(size_t)kv.first] = (float)kv.second->vis_count;
+      total_visits += kv.second->vis_count;
+    }
+    if (total_visits == 0) break;
+    for (float& v : visits) v /= std::max(1, total_visits);
+
+    obs_list.push_back(world.obs());
+    pi_list.push_back(visits);
+
+    const double T = select_temperature(step_idx);
+    const int action_idx = sample_action_from_visits(pi_list.back(), T);
+    const auto& action = world.action_space[action_idx];
+    done = world.step_blue(action) || step_idx > cfg_.max_env_steps;
+    ++step_idx;
+  }
+
+  const auto scores = world.final_scores_norm();
+  const float ret = scores.first;
+
+  std::vector<Transition> traj;
+  traj.reserve(obs_list.size());
+  for (size_t i = 0; i < obs_list.size(); ++i) {
+    auto piT = torch::from_blob(pi_list[i].data(), {(long)action_dim_}, torch::kFloat32).clone();
+    traj.push_back({obs_list[i].detach().clone(), piT, ret});
+  }
+  return traj;
+}
+
 
 void AlphaZeroTrainer::optimize_step() {
   if (replay_.size() < static_cast<size_t>(cfg_.batch_size)) return;

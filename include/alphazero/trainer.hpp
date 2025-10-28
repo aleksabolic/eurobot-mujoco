@@ -46,6 +46,28 @@ struct TrainingConfig {
   bool resume_from_checkpoint = false;
 };
 
+struct Transition { 
+  torch::Tensor obs; 
+  torch::Tensor pi; 
+  float value; 
+};
+
+struct WorkerBatch {
+  std::vector<Transition> traj;
+  int episodes = 0;
+  double blue_sum = 0.0;
+};
+
+struct SelfPlayWorker {
+  eurobot::EurobotWorld world;
+  MCTS mcts;
+
+  SelfPlayWorker(const eurobot::EurobotWorld& base_world,
+                 PolicyNetwork& net,
+                 const MCTSConfig& mcfg)
+  : world(base_world), mcts(mcfg, net) {}
+};
+
 class AlphaZeroTrainer {
 public:
   AlphaZeroTrainer(PolicyNetwork network,
@@ -57,6 +79,7 @@ public:
 
 private:
   std::pair<float, float> play_episode();
+  std::vector<Transition> play_episode_collect(eurobot::EurobotWorld& world, MCTS& mcts);
   void optimize_step();
   bool load_checkpoint(const std::string& path);
   bool save_checkpoint(const std::string& path) const;
@@ -79,6 +102,8 @@ private:
 
   MCTS mcts_;
   torch::optim::Adam optimizer_;
+
+  std::vector<SelfPlayWorker> workers_;
 
   // cached dims
   int64_t action_dim_ = 0;
