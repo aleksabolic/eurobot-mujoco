@@ -57,24 +57,26 @@ struct RobotProfile {
 struct Event {
   double t_remaining = 0.0;
   int actor_id = -1; // 0=blue, 1=yellow
-  int verb = 0, node = 0, color = 0, qty = 0;
+  int verb = 0, node = 0, color = 0, qty = 0; // TODO: switch for Action
   bool did_move = false;
 };
 
 struct RobotState {
   std::string tag;
   RobotProfile profile;
-  int node = 0; // TODO: rename to curr_node
+  int curr_node = 0;
   std::array<int16_t,NUM_COLORS> inv{0,0};
   std::optional<Event> event;
 };
 
 struct EurobotState {
   double t_left = 0.0;
-  std::vector<std::array<int16_t,NUM_COLORS>> pantries;
-  std::vector<std::array<int16_t,NUM_COLORS>> pickups;
-  int nest_blue = 0, nest_yellow = 0;
-  RobotState blue, yellow;
+  // Crate counts by [location_slot][color]
+  std::vector<std::array<int16_t,NUM_COLORS>> pantry_crate_counts;
+  std::vector<std::array<int16_t,NUM_COLORS>> pickup_crate_counts;
+  // Number of crates currently in each team’s nest
+  int blue_nest_count = 0, yellow_nest_count = 0;
+  RobotState blue_robot, yellow_robot;
 };
 
 class EurobotWorld {
@@ -97,7 +99,6 @@ class EurobotWorld {
     std::pair<float,float> final_scores() const;
     std::pair<float,float> final_scores_norm() const;
 
-    // TODO: rename these badly named props
     int N() const { return static_cast<int>(nodes_.size()); }
     bool allow_steal() const {return allow_steal_;}
     int pantry_cap() const {return PANTRY_CAP;}
@@ -105,17 +106,13 @@ class EurobotWorld {
     int num_colors() const {return NUM_COLORS;}
     int max_score() const {return max_score_;}
 
-    // returns -1 if node at idx is not pantry and otherwise index of same pantry relative to world.pantries
-    int pantry_idx(int idx) const {return pantry_idx_[idx];} 
-    // returns -1 if node at idx is not pickup and otherwise index of same pickup relative to world.pickups
-    int pickup_idx(int idx) const {return pickup_idx_[idx];}
-
     const std::vector<Node>& nodes() const { return nodes_; }
     const RewardConfig& reward_config() const { return r_; }
 
-    // TODO: rename this 
-    int NEST_BLUE = -1, NEST_YELL = -1; 
-    std::vector<int> PANTRIES, PICKUPS;
+    // Node indices (into nodes_) for blue/yellow nest
+    int blue_nest_node_idx = -1, yellow_nest_node_idx = -1;
+    // Node indices (into nodes_) for each pantry and pickup location
+    std::vector<int> pantry_node_ids, pickup_node_ids;
     std::vector<Action> action_space;
 
     // Scripted yellow hook: (actor_tag, world, robot, rng) -> optional<Action>
@@ -124,10 +121,12 @@ class EurobotWorld {
                                         const RobotState&,
                                         std::mt19937_64&)> yellow_policy;
 
-    // TODO: rename                                   
-    RobotState blue, yellow;
-    std::vector<std::array<int16_t,NUM_COLORS>> pantries, pickups;
-    int nest_blue = 0, nest_yellow = 0;
+    // Robot states for each agent
+    RobotState blue_robot, yellow_robot;
+    // Crate counts per location slot for pantries and pickups
+    std::vector<std::array<int16_t,NUM_COLORS>> pantry_crate_counts, pickup_crate_counts;
+    // Number of crates currently in each team’s nest
+    int blue_nest_count = 0, yellow_nest_count = 0;
 
     // Bool mask (shape: [num_actions]) over all possible actions
     torch::Tensor legal_mask(bool blue_turn = true) const;
@@ -144,9 +143,9 @@ class EurobotWorld {
     //utils
     bool check_valid_action(int node, int color, int qty, const RobotState& robot) const;
     inline float dist(int i, int j) const { return D_[i*N() + j]; }
-    static std::vector<Node> build_nodes(int& nest_blue, int& nest_yellow,
-                                           std::vector<int>& pantries,
-                                           std::vector<int>& pickups);
+    static std::vector<Node> build_nodes(int& blue_nest_node_idx, int& yellow_nest_node_idx,
+                                           std::vector<int>& pantry_node_ids,
+                                           std::vector<int>& pickup_node_ids);
     static std::vector<float> build_pairwise_D(const std::vector<Node>& nodes);
     void build_action_space();
 
@@ -161,7 +160,8 @@ class EurobotWorld {
     std::vector<Node>  nodes_;
     std::vector<float> D_; // row-major NxN
 
-    std::vector<int> pantry_idx_, pickup_idx_; // size N()
+    // node index -> slot index (or -1 if not a pantry/pickup) (size N())
+    std::vector<int> node_to_pantry_index_, node_to_pickup_index_; 
 
     float max_score_ = 156.0; // theoretical maximum final score for single agent for this env
 };

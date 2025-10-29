@@ -27,7 +27,7 @@ message(STATUS "LibTorch CUDA support: ${Torch_CUDA_FOUND}")
 
 add_library(eurobot_alphazero STATIC
   src/alphazero/eurobot_world.cpp
-  src/alphazero/eurobot_render_cv2.cpp
+  src/alphazero/eurobot_render.cpp
   src/alphazero/mcts.cpp
   src/alphazero/policy_network.cpp
   src/alphazero/trainer.cpp

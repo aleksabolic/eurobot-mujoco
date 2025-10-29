@@ -51,13 +51,13 @@ def format_inv(inv: np.ndarray) -> str:
 
 
 def print_state(world: EurobotWorld) -> None:
-    blue_node = world.nodes[world.blue.node].name
-    yellow_node = world.nodes[world.yellow.node].name
+    blue_node = world.nodes[world.blue_robot.curr_node].name
+    yellow_node = world.nodes[world.yellow_robot.curr_node].name
     print("\n=== Current State ===")
     print(f"Time left: {world.t_left:5.2f}s")
     print(f"Score  → blue={world.nest_blue_counted}, yellow={world.nest_yellow_counted}")
-    print(f"Blue    → node={blue_node:>10}, inv=({format_inv(world.blue.inv)})")
-    print(f"Yellow  → node={yellow_node:>10}, inv=({format_inv(world.yellow.inv)})")
+    print(f"Blue    → node={blue_node:>10}, inv=({format_inv(world.blue_robot.inv)})")
+    print(f"Yellow  → node={yellow_node:>10}, inv=({format_inv(world.yellow_robot.inv)})")
 
     def _print_stock(title: str, entries: Iterable[Tuple[int, np.ndarray]]) -> None:
         lines = []
@@ -75,8 +75,8 @@ def print_state(world: EurobotWorld) -> None:
         else:
             print("  (empty)")
 
-    pantry_entries = ((node_id, world.pantries[j]) for j, node_id in enumerate(world.PANTRIES))
-    pickup_entries = ((node_id, world.pickups[j]) for j, node_id in enumerate(world.PICKUPS))
+    pantry_entries = ((node_id, world.pantry_crate_counts[j]) for j, node_id in enumerate(world.pantry_node_ids))
+    pickup_entries = ((node_id, world.pickup_crate_counts[j]) for j, node_id in enumerate(world.pickup_node_ids))
     _print_stock("Pantries with stock:", pantry_entries)
     _print_stock("Pickups with stock:", pickup_entries)
 
@@ -129,7 +129,7 @@ def parse_action(
         raise ValueError(f"unknown verb '{tokens[0]}'")
     verb = VERB_LOOKUP[tokens[0].lower()]
 
-    current_node = world.blue.node if actor_tag == "blue" else world.yellow.node
+    current_node = world.blue_robot.curr_node if actor_tag == "blue" else world.yellow_robot.curr_node
     node = current_node
     color = int(Col.BLUE)
     qty_defaults = {
@@ -235,7 +235,7 @@ def execute_user_action(
     )
     run_step(action_arr, auto=False)
 
-    while not done and env.world.blue.event is not None and env.world.t_left > 0.0:
+    while not done and env.world.blue_robot.event is not None and env.world.t_left > 0.0:
         dt, r_gain = env.world._advance_until_next()
         if dt <= 0.0:
             break

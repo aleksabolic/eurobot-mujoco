@@ -1,4 +1,4 @@
-#include "alphazero/eurobot_render_cv2.hpp"
+#include "alphazero/eurobot_render.hpp"
 
 #include <algorithm>
 #include <array>
@@ -118,15 +118,15 @@ std::pair<double, double> EurobotCV2Renderer::compute_scores(
     return total;
   };
 
-  const int blue_pantry = sum_color(state.pantries, static_cast<int>(Col::BLUE));
-  const int yellow_pantry = sum_color(state.pantries, static_cast<int>(Col::YELLOW));
+  const int blue_pantry = sum_color(state.pantry_crate_counts, static_cast<int>(Col::BLUE));
+  const int yellow_pantry = sum_color(state.pantry_crate_counts, static_cast<int>(Col::YELLOW));
 
   double blue_score = rewards.pantry_bonus * static_cast<double>(blue_pantry) +
-                      rewards.nest_bonus * static_cast<double>(state.nest_blue);
+                      rewards.nest_bonus * static_cast<double>(state.blue_nest_count);
   double yellow_score = rewards.pantry_bonus * static_cast<double>(yellow_pantry) +
-                        rewards.nest_bonus * static_cast<double>(state.nest_yellow);
+                        rewards.nest_bonus * static_cast<double>(state.yellow_nest_count);
 
-  for (const auto& row : state.pantries) {
+  for (const auto& row : state.pantry_crate_counts) {
     const int b = static_cast<int>(row[static_cast<int>(Col::BLUE)]);
     const int y = static_cast<int>(row[static_cast<int>(Col::YELLOW)]);
     if (b > y) {
@@ -136,10 +136,10 @@ std::pair<double, double> EurobotCV2Renderer::compute_scores(
     }
   }
 
-  if (state.blue.node == world.NEST_BLUE) {
+  if (state.blue_robot.curr_node == world.blue_nest_node_idx) {
     blue_score += rewards.finish_in_nest_bonus;
   }
-  if (state.yellow.node == world.NEST_YELL) {
+  if (state.yellow_robot.curr_node == world.yellow_nest_node_idx) {
     yellow_score += rewards.finish_in_nest_bonus;
   }
 
@@ -245,10 +245,10 @@ cv::Mat EurobotCV2Renderer::draw_snapshot(
     cv::rectangle(frame, tl, br, BLK, 1);
 
     cv::Scalar fill = FACE_BLUE;
-    std::string label = "B" + std::to_string(state.nest_blue);
-    if (static_cast<int>(idx) == world.NEST_YELL) {
+    std::string label = "B" + std::to_string(state.blue_nest_count);
+    if (static_cast<int>(idx) == world.yellow_nest_node_idx) {
       fill = FACE_YELLOW;
-      label = "Y" + std::to_string(state.nest_yellow);
+      label = "Y" + std::to_string(state.yellow_nest_count);
     }
 
     const int font_face = cv::FONT_HERSHEY_SIMPLEX;
@@ -269,8 +269,8 @@ cv::Mat EurobotCV2Renderer::draw_snapshot(
   }
 
   // pantries
-  for (size_t k = 0; k < world.PANTRIES.size(); ++k) {
-    const int node_idx = world.PANTRIES[k];
+  for (size_t k = 0; k < world.pantry_node_ids.size(); ++k) {
+    const int node_idx = world.pantry_node_ids[k];
     if (node_idx < 0 || node_idx >= static_cast<int>(nodes.size())) {
       continue;
     }
@@ -282,8 +282,8 @@ cv::Mat EurobotCV2Renderer::draw_snapshot(
     const int br_x = std::max(p0.x, p1.x);
     const int br_y = std::max(p0.y, p1.y);
 
-    const auto& pantry_row = state.pantries.size() > k ? state.pantries[k]
-                                                       : std::array<int16_t, NUM_COLORS>{0, 0};
+    const auto& pantry_row = state.pantry_crate_counts.size() > k ? state.pantry_crate_counts[k]
+                                                               : std::array<int16_t, NUM_COLORS>{0, 0};
     const int b = static_cast<int>(pantry_row[static_cast<int>(Col::BLUE)]);
     const int y = static_cast<int>(pantry_row[static_cast<int>(Col::YELLOW)]);
 
@@ -320,8 +320,8 @@ cv::Mat EurobotCV2Renderer::draw_snapshot(
   }
 
   // pickups
-  for (size_t k = 0; k < world.PICKUPS.size(); ++k) {
-    const int node_idx = world.PICKUPS[k];
+  for (size_t k = 0; k < world.pickup_node_ids.size(); ++k) {
+    const int node_idx = world.pickup_node_ids[k];
     if (node_idx < 0 || node_idx >= static_cast<int>(nodes.size())) {
       continue;
     }
@@ -329,7 +329,7 @@ cv::Mat EurobotCV2Renderer::draw_snapshot(
     const cv::Point center = world_to_px(node.xy[0], node.xy[1]);
     const int radius = std::max(2, length_to_px(PICKUP_R));
 
-    const auto& pickup_row = state.pickups.size() > k ? state.pickups[k]
+    const auto& pickup_row = state.pickup_crate_counts.size() > k ? state.pickup_crate_counts[k]
                                                       : std::array<int16_t, NUM_COLORS>{0, 0};
     const int b = static_cast<int>(pickup_row[static_cast<int>(Col::BLUE)]);
     const int y = static_cast<int>(pickup_row[static_cast<int>(Col::YELLOW)]);
@@ -374,18 +374,18 @@ cv::Mat EurobotCV2Renderer::draw_snapshot(
     cv::circle(frame, center, radius, BLK, 2);
   };
 
-  if (state.blue.node >= 0 && state.blue.node < static_cast<int>(nodes.size())) {
-    draw_robot(nodes[static_cast<size_t>(state.blue.node)], BLUE);
+  if (state.blue_robot.curr_node >= 0 && state.blue_robot.curr_node < static_cast<int>(nodes.size())) {
+    draw_robot(nodes[static_cast<size_t>(state.blue_robot.curr_node)], BLUE);
   }
-  if (state.yellow.node >= 0 && state.yellow.node < static_cast<int>(nodes.size())) {
-    draw_robot(nodes[static_cast<size_t>(state.yellow.node)], YELL);
+  if (state.yellow_robot.curr_node >= 0 && state.yellow_robot.curr_node < static_cast<int>(nodes.size())) {
+    draw_robot(nodes[static_cast<size_t>(state.yellow_robot.curr_node)], YELL);
   }
 
   // header text
   const int header_x = pad_left_;
   const int header_y = 24;
-  const auto inv_blue = state.blue.inv;
-  const auto inv_yell = state.yellow.inv;
+  const auto inv_blue = state.blue_robot.inv;
+  const auto inv_yell = state.yellow_robot.inv;
 
   cv::putText(frame,
               cv::format("t_left = %.1fs", state.t_left),

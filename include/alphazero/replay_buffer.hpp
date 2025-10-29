@@ -31,7 +31,6 @@ public:
     auto o = obs.detach().contiguous();
     auto p = pi.detach().contiguous();
 
-    // TODO: remove these checks
     // enforce consistent shapes across entries
     if (obs_shape_.empty()) {
       obs_shape_ = o.sizes().vec();
