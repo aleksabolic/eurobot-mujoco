@@ -129,7 +129,7 @@ void AlphaZeroTrainer::train() {
     if (tb_logger_ && episodes_collected > 0) {
       const double avg_return = blue_return_sum / (double)episodes_collected;
       tb_logger_->add_scalar("train/avg_return", iteration_counter_, avg_return);
-      tb_logger_->add_scalar("rollout/blue_final_score_mean", iteration_counter_, avg_return * 160.0);
+      tb_logger_->add_scalar("rollout/blue_final_score_mean", iteration_counter_, avg_return * world_.max_score());
     }
 
     for (int s = 0; s < cfg_.training_steps; ++s) {

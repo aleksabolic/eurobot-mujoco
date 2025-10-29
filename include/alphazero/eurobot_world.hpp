@@ -103,6 +103,7 @@ class EurobotWorld {
     int pantry_cap() const {return PANTRY_CAP;}
     int nest_cap() const {return NEST_CAP;}
     int num_colors() const {return NUM_COLORS;}
+    int max_score() const {return max_score_;}
 
     // returns -1 if node at idx is not pantry and otherwise index of same pantry relative to world.pantries
     int pantry_idx(int idx) const {return pantry_idx_[idx];} 
@@ -161,5 +162,7 @@ class EurobotWorld {
     std::vector<float> D_; // row-major NxN
 
     std::vector<int> pantry_idx_, pickup_idx_; // size N()
+
+    float max_score_ = 156.0; // theoretical maximum final score for single agent for this env
 };
 }

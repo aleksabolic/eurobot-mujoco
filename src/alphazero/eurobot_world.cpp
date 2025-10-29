@@ -344,7 +344,7 @@ std::pair<float,float> EurobotWorld::final_scores() const {
 
 std::pair<float,float> EurobotWorld::final_scores_norm() const {
   auto [b,y] = final_scores();
-  return { b/160.f, y/160.f };
+  return { b/max_score_, y/max_score_ };
 }
 
 EurobotState EurobotWorld::get_state() const {
