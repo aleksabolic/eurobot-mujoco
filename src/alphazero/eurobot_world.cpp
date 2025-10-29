@@ -130,11 +130,13 @@ size_t EurobotWorld::obs_size() const {
        + size_t(NUM_COLORS)                                 // blue_inv
        + size_t(PANTRIES.size() * NUM_COLORS)               // pantries
        + size_t(PICKUPS.size()  * NUM_COLORS)               // pickups
+       + size_t(2)                                          // nests
        + size_t(1);                                         // time remaining
 }
 
 torch::Tensor EurobotWorld::obs() const {
   // TODO: feature engineer more obs values
+  // TODO: normalize obs!
   const int Nn = N();
   const size_t K = obs_size();
   auto t = torch::zeros({(long)K}, torch::kFloat32);
@@ -143,11 +145,11 @@ torch::Tensor EurobotWorld::obs() const {
   size_t off = 0;
 
   // blue node one-hot [N]
-  if (blue.node >= 0 && blue.node < Nn) buf[off + blue.node] = 1.f;
+  buf[off + blue.node] = 1.f;
   off += Nn;
 
   // yellow node one-hot [N]
-  if (yellow.node >= 0 && yellow.node < Nn) buf[off + yellow.node] = 1.f;
+  buf[off + yellow.node] = 1.f;
   off += Nn;
 
   // blue_inv [NUM_COLORS]
@@ -162,6 +164,10 @@ torch::Tensor EurobotWorld::obs() const {
   for (const auto& row : pickups) {
     for (int c = 0; c < NUM_COLORS; ++c) buf[off++] = static_cast<float>(row[c]);
   }
+  
+  // nests [2]
+  buf[off++] = nest_blue;
+  buf[off++] = nest_yellow;
 
   // time remaining
   buf[off++] = t_left_;

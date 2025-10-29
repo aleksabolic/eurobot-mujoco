@@ -92,13 +92,14 @@ private:
 
 private:
   TrainingConfig cfg_;
-  MCTSConfig mcts_cfg_;
   torch::Device device_ = torch::kCPU;
 
   // ownership
   PolicyNetwork policy_;
   eurobot::EurobotWorld world_;
   ReplayBuffer replay_;
+
+  MCTSConfig mcts_cfg_;
 
   MCTS mcts_;
   torch::optim::Adam optimizer_;
