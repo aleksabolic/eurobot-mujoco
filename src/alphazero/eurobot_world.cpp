@@ -136,7 +136,6 @@ size_t EurobotWorld::obs_size() const {
 
 torch::Tensor EurobotWorld::obs() const {
   // TODO: feature engineer more obs values
-  // TODO: normalize obs!
   const int Nn = N();
   const size_t K = obs_size();
   auto t = torch::zeros({(long)K}, torch::kFloat32);
@@ -153,24 +152,27 @@ torch::Tensor EurobotWorld::obs() const {
   off += Nn;
 
   // blue_inv [NUM_COLORS]
-  for (int c = 0; c < NUM_COLORS; ++c) buf[off++] = static_cast<float>(blue.inv[c]);
+  for (int c = 0; c < NUM_COLORS; ++c) 
+    buf[off++] = static_cast<float>(blue.inv[c]) / blue.profile.capacity;
 
   // pantries [len(PANTRIES)*NUM_COLORS]
   for (const auto& row : pantries) {
-    for (int c = 0; c < NUM_COLORS; ++c) buf[off++] = static_cast<float>(row[c]);
+    for (int c = 0; c < NUM_COLORS; ++c) 
+      buf[off++] = static_cast<float>(row[c]) / PANTRY_CAP;
   }
 
   // pickups [len(PICKUPS)*NUM_COLORS]
   for (const auto& row : pickups) {
-    for (int c = 0; c < NUM_COLORS; ++c) buf[off++] = static_cast<float>(row[c]);
+    for (int c = 0; c < NUM_COLORS; ++c) 
+      buf[off++] = static_cast<float>(row[c]) / 2.0; // 2 crates per pickup per color
   }
   
   // nests [2]
-  buf[off++] = nest_blue;
-  buf[off++] = nest_yellow;
+  buf[off++] = static_cast<float>(nest_blue) / NEST_CAP;
+  buf[off++] = static_cast<float>(nest_yellow) / NEST_CAP;
 
   // time remaining
-  buf[off++] = t_left_;
+  buf[off++] = t_left_ / TIME_LIMIT_S;
 
   // make an owning tensor (clone)
   return t;
