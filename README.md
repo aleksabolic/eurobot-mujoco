@@ -1,6 +1,6 @@
 # C++ AlphaZero Eurobot
 
-This directory contains a starter C++ project that implements high-level AlphaZero algorithm. It is configured to build against LibTorch (the official PyTorch C++ API) and provides minimal scaffolding for a policy network, Monte-Carlo Tree Search (MCTS) loop, and a training harness.
+This directory contains a C++ project that implements AlphaZero algorithm. It is configured to build against LibTorch (the official PyTorch C++ API).
 
 ## Layout
 
@@ -54,12 +54,17 @@ cmake -S src/ -B build/ -DCMAKE_PREFIX_PATH=/path/to/libtorch
 cmake --build build/
 ```
 
-## Checkpointing & Resume
+## Alternative build (docker)
+If you are on windows installation is trickier.
+To use docker do:
 
-Training configuration is read from `configs/world.yaml`. Set the following keys under the `training` node to enable resume:
+```bash
+docker build -t eurobot:cpu .
 
-- `checkpoint_path`: File that stores the trainer state (policy network, optimizer, replay buffer, and iteration counters). If omitted, it defaults to `<log_dir>/<run_name>_checkpoint.pt`.
-- `checkpoint_interval`: How often (in iterations) to write the checkpoint. Set to `0` to disable automatic checkpointing.
-- `resume_from_checkpoint`: When `true`, the trainer restores the checkpoint before continuing the loop.
+docker run --rm -it -v ${PWD}:/work -w /work eurobot:cpu bash -lc 'cmake -S . -B build -DCMAKE_BUILD_TYPE=RelWithDebInfo -DCMAKE_PREFIX_PATH=/opt/libtorch && cmake --build build -j$(nproc)'
+```
+then run the built app with:
 
-With checkpoints enabled the trainer persistently saves progress after each iteration (or at the requested interval) and you can stop/restart the binary without retraining from scratch. The checkpoint also feeds TensorBoard step counters so the logs remain continuous.
+```bash
+docker run --rm -it -v ${PWD}:/work -w /work eurobot:cpu bash -lc './build/eurobot_app --config configs/world_test.yaml'
+```
