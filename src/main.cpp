@@ -57,6 +57,7 @@ inline eu::RobotProfile load_profile(const YAML::Node& node) {
   eu::RobotProfile p{};
   p.capacity        = node["capacity"].as<int>();
   p.max_action_qty  = node["max_action_qty"].as<int>();
+  p.max_flip_qty    = get_or<int>(node, "max_flip_qty", p.max_action_qty);
   p.can_flip        = node["can_flip"].as<bool>();
 
   const float v_max = get_or<float>(node, "v_max", 0.2f);

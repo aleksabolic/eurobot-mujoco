@@ -2,6 +2,7 @@ profiles:
   blue:
     capacity: 8
     max_action_qty: 4
+    max_flip_qty: 4
     can_flip: true
     v_max: 0.2
     a_max: 1
@@ -13,6 +14,7 @@ profiles:
   yellow:
     capacity: 8
     max_action_qty: 4
+    max_flip_qty: 4
     can_flip: true
     v_max: 0.2
     a_max: 1

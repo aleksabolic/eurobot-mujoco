@@ -2,6 +2,7 @@ profiles:
   blue:
     capacity: 8
     max_action_qty: 4
+    max_flip_qty: 4
     can_flip: true
     v_max: 0.2
     a_max: 1
@@ -13,6 +14,7 @@ profiles:
   yellow:
     capacity: 8
     max_action_qty: 4
+    max_flip_qty: 4
     can_flip: true
     v_max: 0.2
     a_max: 1
@@ -50,13 +52,13 @@ training:
   weight_decay: 0.0001
   max_grad_norm: 5.0
   policy_loss_weight: 1.0
-  value_loss_weight: 0.8
+  value_loss_weight: 0.9
   entropy_weight: 1e-3
   temperature: 1.0
   temperature_decay_steps: 30
   log_dir: runs
-  run_name: alphazero_baseline2
+  run_name: alphazero_norm_obs
   enable_tensorboard: true
-  checkpoint_path: runs/checkpoints/alphazero_baseline2.pt
+  checkpoint_path: runs/checkpoints/alphazero_norm_obs.pt
   checkpoint_interval: 100
-  resume_from_checkpoint: true
+  resume_from_checkpoint: false

@@ -49,6 +49,7 @@ struct RewardConfig {
 struct RobotProfile {
   int  capacity = 0;
   int  max_action_qty = 0;
+  int  max_flip_qty = 0;
   bool can_flip = false;
   std::function<double(double /*distance*/)> travel_time;
   std::function<double(Verb /*verb*/, int /*qty*/)> handle_time;
@@ -141,7 +142,7 @@ class EurobotWorld {
     void finish_event(const std::string& actor_tag, int verb, int node, int color, int qty, bool did_move);
 
     //utils
-    bool check_valid_action(int node, int color, int qty, const RobotState& robot) const;
+    bool check_valid_action(Verb verb, int node, int color, int qty, const RobotState& robot) const;
     inline float dist(int i, int j) const { return D_[i*N() + j]; }
     static std::vector<Node> build_nodes(int& blue_nest_node_idx, int& yellow_nest_node_idx,
                                            std::vector<int>& pantry_node_ids,

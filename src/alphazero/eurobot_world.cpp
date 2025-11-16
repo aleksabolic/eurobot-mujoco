@@ -184,35 +184,37 @@ torch::Tensor EurobotWorld::obs() const {
   return t;
 }
 
-bool EurobotWorld::check_valid_action(int node, int color, int qty, const RobotState& robot) const {
+bool EurobotWorld::check_valid_action(Verb verb, int node, int color, int qty, const RobotState& robot) const {
   if (node < 0 || node >= N()) return false;
   if (color < 0 || color >= NUM_COLORS) return false;
   if (qty < 0 || qty > robot.profile.max_action_qty) return false;
+  if (verb == Verb::FLIP && qty > robot.profile.max_flip_qty) return false;
   return true;
 }
 
 void EurobotWorld::schedule(RobotState& rob, const Action& a) {
-  int verb  = a.verb, node = a.node, color = a.color, qty = a.qty;
-  if (!check_valid_action(node, color, qty, rob)) {
+  Verb verb = static_cast<Verb>(a.verb);
+  int node = a.node, color = a.color, qty = a.qty;
+  if (!check_valid_action(verb, node, color, qty, rob)) {
     throw std::runtime_error("Invalid action");
   }
 
   float d = (node != rob.curr_node) ? dist(rob.curr_node, node) : 0.f;
-  double t_move = (static_cast<Verb>(verb)==Verb::PICK ||
-                   static_cast<Verb>(verb)==Verb::PLACE||
-                   static_cast<Verb>(verb)==Verb::STEAL) && d>0.f
+  double t_move = (verb == Verb::PICK ||
+                   verb == Verb::PLACE||
+                   verb == Verb::STEAL) && d>0.f
                   ? rob.profile.travel_time(d) : 0.0;
-  double t_hand = rob.profile.handle_time(static_cast<Verb>(verb), qty);
+  double t_hand = rob.profile.handle_time(verb, qty);
   double t_total = t_move + t_hand;
 
   bool did_move = (t_move > 0.0);
   int actor_id  = (rob.tag=="blue") ? 0 : 1;
 
   if (t_total <= 0.0) {
-    finish_event(rob.tag, verb, node, color, qty, did_move);
+    finish_event(rob.tag, static_cast<int>(verb), node, color, qty, did_move);
     return;
   }
-  rob.event = Event{t_total, actor_id, verb, node, color, qty, did_move};
+  rob.event = Event{t_total, actor_id, static_cast<int>(verb), node, color, qty, did_move};
 }
 
 void EurobotWorld::schedule_yellow_scripted() {
@@ -294,7 +296,7 @@ void EurobotWorld::finish_event(const std::string& actor_tag, int verb_i, int no
     */
     if (!prof.can_flip) { /* no-op */ }
     else {
-      int flip_cnt = std::min(qty, (int)rob.inv[color]);
+      int flip_cnt = std::min({qty, prof.max_flip_qty, static_cast<int>(rob.inv[color])});
       rob.inv[color] -= static_cast<int16_t>(flip_cnt);
       rob.inv[1-color] += static_cast<int16_t>(flip_cnt);
     }
@@ -431,7 +433,8 @@ torch::Tensor EurobotWorld::legal_mask(bool blue_turn) const {
 
       case Verb::FLIP: {
         // Flip ignores node.
-        legal = (rob.profile.can_flip && rob.inv[color] >= qty);
+        const int max_flip = blue_turn ? blue_robot.profile.max_flip_qty : yellow_robot.profile.max_flip_qty;
+        legal = (rob.profile.can_flip && qty <= max_flip && rob.inv[color] >= qty);
       } break;
 
       case Verb::STEAL: {
