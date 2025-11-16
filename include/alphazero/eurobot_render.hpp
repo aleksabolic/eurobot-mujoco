@@ -1,6 +1,7 @@
 #pragma once
 
 #include <filesystem>
+#include <memory>
 #include <optional>
 #include <string>
 #include <vector>
@@ -11,17 +12,22 @@
 
 namespace eurobot {
 
+#if defined(EUROBOT_HAVE_X11)
+class X11Window;
+#endif
+
 /**
  * Lightweight OpenCV renderer that mirrors the Python EurobotCV2Renderer.
  * It renders the current world snapshot (or a provided EurobotState) to a cv::Mat
  * and optionally shows the frame in a named window.
  */
-class EurobotCV2Renderer {
+ class EurobotCV2Renderer {
  public:
   EurobotCV2Renderer(
       cv::Size canvas = cv::Size(900, 600),
       std::optional<std::filesystem::path> background_path = std::nullopt,
       double background_alpha = 0.35);
+  ~EurobotCV2Renderer();
 
   cv::Mat draw_snapshot(
       const EurobotWorld& world,
@@ -41,6 +47,8 @@ class EurobotCV2Renderer {
                              const std::optional<EurobotState>& override) const;
   void ensure_window();
   void try_center_window(const cv::Mat& frame);
+  void show_frame(const cv::Mat& frame, bool show);
+  void destroy_window();
 
  private:
   cv::Size canvas_;
@@ -66,6 +74,9 @@ class EurobotCV2Renderer {
   std::string window_title_ = "Eurobot (cv2)";
   bool window_created_ = false;
   bool window_centered_ = false;
+#if defined(EUROBOT_HAVE_X11)
+  std::unique_ptr<class X11Window> x11_window_;
+#endif
 };
 
 }  // namespace eurobot

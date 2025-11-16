@@ -64,8 +64,8 @@ training:
   temperature: 1.0
   temperature_decay_steps: 30
   log_dir: runs
-  run_name: alphazero_norm_obs
+  run_name: alphazero_yellow_script
   enable_tensorboard: true
-  checkpoint_path: runs/checkpoints/alphazero_norm_obs.pt
+  checkpoint_path: runs/checkpoints/alphazero_yellow_script.pt
   checkpoint_interval: 100
   resume_from_checkpoint: false

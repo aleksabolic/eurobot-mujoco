@@ -5,6 +5,7 @@
 #include <cmath>
 #include <cstdlib>
 #include <filesystem>
+#include <memory>
 #include <string>
 #include <utility>
 
@@ -12,7 +13,157 @@
 #include <opencv2/imgcodecs.hpp>
 #include <opencv2/imgproc.hpp>
 
+#if defined(EUROBOT_HAVE_X11)
+#include <X11/Xlib.h>
+#include <X11/Xutil.h>
+#endif
+
 namespace eurobot {
+
+#if defined(EUROBOT_HAVE_X11)
+
+class X11Window {
+ public:
+  ~X11Window() { close(); }
+
+  bool open(int width, int height, const std::string& title) {
+    if (display_) {
+      resize(width, height);
+      return true;
+    }
+
+    display_ = XOpenDisplay(nullptr);
+    if (!display_) {
+      return false;
+    }
+
+    const int screen = DefaultScreen(display_);
+    window_ =
+        XCreateSimpleWindow(display_, RootWindow(display_, screen), 0, 0, width, height, 0,
+                            BlackPixel(display_, screen), WhitePixel(display_, screen));
+    if (!window_) {
+      close();
+      return false;
+    }
+
+    gc_ = XCreateGC(display_, window_, 0, nullptr);
+    if (!gc_) {
+      close();
+      return false;
+    }
+
+    XStoreName(display_, window_, title.c_str());
+    wm_delete_window_ = XInternAtom(display_, "WM_DELETE_WINDOW", False);
+    if (wm_delete_window_) {
+      XSetWMProtocols(display_, window_, &wm_delete_window_, 1);
+    }
+
+    XSelectInput(display_, window_, ExposureMask | KeyPressMask | StructureNotifyMask);
+    XMapRaised(display_, window_);
+    width_ = width;
+    height_ = height;
+    return true;
+  }
+
+  void present(const cv::Mat& frame) {
+    if (!display_ || !window_ || frame.empty()) {
+      return;
+    }
+    resize(frame.cols, frame.rows);
+    pump_events();
+
+    auto buffer = std::make_unique<uint8_t[]>(static_cast<size_t>(width_) * height_ * 4);
+    const int channels = frame.channels();
+    for (int y = 0; y < frame.rows; ++y) {
+      const uint8_t* src = frame.ptr<uint8_t>(y);
+      uint8_t* dst = buffer.get() + static_cast<size_t>(y * width_) * 4;
+      for (int x = 0; x < frame.cols; ++x) {
+        if (channels >= 3) {
+          dst[0] = src[0];
+          dst[1] = src[1];
+          dst[2] = src[2];
+          dst[3] = 0xFF;
+        } else {
+          dst[0] = dst[1] = dst[2] = src[0];
+          dst[3] = 0xFF;
+        }
+        src += channels;
+        dst += 4;
+      }
+    }
+
+    XImage* image =
+        XCreateImage(display_, DefaultVisual(display_, DefaultScreen(display_)), 24, ZPixmap, 0,
+                     reinterpret_cast<char*>(buffer.get()), width_, height_, 32, width_ * 4);
+    if (!image) {
+      return;
+    }
+
+    image->byte_order = LSBFirst;
+    image->bitmap_bit_order = LSBFirst;
+    image->bits_per_pixel = 32;
+    image->red_mask = 0x00FF0000;
+    image->green_mask = 0x0000FF00;
+    image->blue_mask = 0x000000FF;
+
+    XPutImage(display_, window_, gc_, image, 0, 0, 0, 0, width_, height_);
+    XFlush(display_);
+
+    image->data = nullptr;
+    XDestroyImage(image);
+  }
+
+  void close() {
+    if (display_) {
+      if (gc_) {
+        XFreeGC(display_, gc_);
+        gc_ = 0;
+      }
+      if (window_) {
+        XDestroyWindow(display_, window_);
+        window_ = 0;
+      }
+      XCloseDisplay(display_);
+      display_ = nullptr;
+    }
+    width_ = 0;
+    height_ = 0;
+  }
+
+ private:
+  void resize(int width, int height) {
+    if (!display_ || !window_) {
+      return;
+    }
+    if (width == width_ && height == height_) {
+      return;
+    }
+    width_ = width;
+    height_ = height;
+    XResizeWindow(display_, window_, width_, height_);
+  }
+
+  void pump_events() {
+    if (!display_) return;
+    while (XPending(display_)) {
+      XEvent event;
+      XNextEvent(display_, &event);
+      if (event.type == ClientMessage &&
+          static_cast<Atom>(event.xclient.data.l[0]) == wm_delete_window_) {
+        // Ignore close requests; ctrl+c stops the process.
+      }
+    }
+  }
+
+  Display* display_ = nullptr;
+  Window window_ = 0;
+  GC gc_ = 0;
+  Atom wm_delete_window_ = 0;
+  int width_ = 0;
+  int height_ = 0;
+};
+
+#endif  // EUROBOT_HAVE_X11
 
 namespace {
 
@@ -88,6 +239,10 @@ EurobotCV2Renderer::EurobotCV2Renderer(
       cv::resize(img, table_image_, cv::Size(board_width_, board_height_), 0, 0, cv::INTER_AREA);
     }
   }
+}
+
+EurobotCV2Renderer::~EurobotCV2Renderer() {
+  destroy_window();
 }
 
 void EurobotCV2Renderer::set_window_title(std::string title) {
@@ -198,6 +353,39 @@ void EurobotCV2Renderer::try_center_window(const cv::Mat& frame) {
   const int ny = std::max(0, (screen_h - window_h) / 2);
   cv::moveWindow(window_title_, nx, ny);
   window_centered_ = true;
+}
+
+void EurobotCV2Renderer::destroy_window() {
+  if (window_created_) {
+    cv::destroyWindow(window_title_);
+    window_created_ = false;
+    window_centered_ = false;
+  }
+#if defined(EUROBOT_HAVE_X11)
+  x11_window_.reset();
+#endif
+}
+
+void EurobotCV2Renderer::show_frame(const cv::Mat& frame, bool show) {
+  if (!show) {
+    return;
+  }
+#if defined(EUROBOT_HAVE_X11)
+  if (!x11_window_) {
+    x11_window_ = std::make_unique<X11Window>();
+    if (!x11_window_->open(frame.cols, frame.rows, window_title_)) {
+      x11_window_.reset();
+    }
+  }
+  if (x11_window_) {
+    x11_window_->present(frame);
+    return;
+  }
+#endif
+  ensure_window();
+  cv::imshow(window_title_, frame);
+  cv::waitKey(1);
+  try_center_window(frame);
 }
 
 cv::Mat EurobotCV2Renderer::draw_snapshot(
@@ -445,12 +633,7 @@ cv::Mat EurobotCV2Renderer::draw_snapshot(
                 cv::FONT_HERSHEY_SIMPLEX, 0.43, BLK, 1, cv::LINE_AA);
   }
 
-  if (show) {
-    ensure_window();
-    cv::imshow(window_title_, frame);
-    cv::waitKey(1);
-    try_center_window(frame);
-  }
+  show_frame(frame, show);
 
   return frame;
 }

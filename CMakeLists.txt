@@ -21,7 +21,8 @@ find_package(Torch REQUIRED)
 set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} ${TORCH_CXX_FLAGS}")
 
 find_package(yaml-cpp REQUIRED)
-find_package(OpenCV REQUIRED COMPONENTS core imgproc highgui imgcodecs)
+find_package(OpenCV REQUIRED COMPONENTS core imgproc highgui imgcodecs videoio)
+find_package(X11)
 
 message(STATUS "LibTorch CUDA support: ${Torch_CUDA_FOUND}")
 
@@ -47,6 +48,12 @@ target_link_libraries(eurobot_alphazero
     ${OpenCV_LIBS}
 )
 
+if(X11_FOUND)
+  target_include_directories(eurobot_alphazero PUBLIC ${X11_INCLUDE_DIR})
+  target_link_libraries(eurobot_alphazero PUBLIC ${X11_LIBRARIES})
+  target_compile_definitions(eurobot_alphazero PUBLIC EUROBOT_HAVE_X11=1)
+endif()
+
 set_target_properties(eurobot_alphazero PROPERTIES
   POSITION_INDEPENDENT_CODE ON
 )
@@ -66,15 +73,15 @@ target_link_libraries(eurobot_app
     yaml-cpp
 )
 
-# add_executable(eurobot_eval
-#   src/eurobot_eval.cpp
-# )
+add_executable(eurobot_eval
+  src/eurobot_eval.cpp
+)
 
-# target_link_libraries(eurobot_eval
-#   PRIVATE
-#     eurobot_alphazero
-#     yaml-cpp
-# )
+target_link_libraries(eurobot_eval
+  PRIVATE
+    eurobot_alphazero
+    yaml-cpp
+)
 
 if(MSVC)
   target_compile_definitions(eurobot_app PRIVATE _CRT_SECURE_NO_WARNINGS)
