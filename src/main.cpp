@@ -1,8 +1,10 @@
+#include <algorithm>
 #include <filesystem>
 #include <iostream>
 #include <stdexcept>
 #include <string>
 #include <vector>
+#include <cctype>
 
 #include <torch/torch.h>
 #include <yaml-cpp/yaml.h>
@@ -10,6 +12,7 @@
 #include "alphazero/trainer.hpp"
 #include "alphazero/eurobot_world.hpp"
 #include "alphazero/policy_network.hpp"
+#include "alphazero/yellow_policies.hpp"
 
 namespace az = alphazero;
 namespace eu = eurobot;
@@ -23,6 +26,164 @@ inline void assign_if(const YAML::Node& n, const char* key, T& out) {
 template <typename T>
 inline T get_or(const YAML::Node& n, const char* key, T def) {
   return (n && n[key]) ? n[key].as<T>() : def;
+}
+
+inline std::string to_lower_copy(std::string s) {
+  std::transform(s.begin(), s.end(), s.begin(),
+                 [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return s;
+}
+
+inline eu::Verb parse_verb_field(const YAML::Node& node) {
+  if (!node || !node.IsScalar())
+    throw std::runtime_error("yellow_policy.script entries require a 'verb' scalar");
+  const std::string value = to_lower_copy(node.as<std::string>());
+  if (value == "pick")  return eu::Verb::PICK;
+  if (value == "place") return eu::Verb::PLACE;
+  if (value == "flip")  return eu::Verb::FLIP;
+  if (value == "steal") return eu::Verb::STEAL;
+  throw std::runtime_error("Unknown verb in yellow_policy.script: " + node.as<std::string>());
+}
+
+inline int parse_color_field(const YAML::Node& node, int default_value) {
+  if (!node) return default_value;
+  if (!node.IsScalar())
+    throw std::runtime_error("yellow_policy.script color must be a scalar value");
+  const std::string raw = node.as<std::string>();
+  const std::string value = to_lower_copy(raw);
+  if (value == "blue" || value == "b")   return static_cast<int>(eu::Col::BLUE);
+  if (value == "yellow" || value == "y") return static_cast<int>(eu::Col::YELLOW);
+  try {
+    size_t idx = 0;
+    const int parsed = std::stoi(raw, &idx);
+    if (idx == raw.size()) return parsed;
+  } catch (const std::exception&) {
+    // fallthrough to throw
+  }
+  throw std::runtime_error("Unknown color in yellow_policy.script: " + raw);
+}
+
+inline int resolve_node_id(const YAML::Node& node, const eu::EurobotWorld& world) {
+  if (!node)
+    throw std::runtime_error("yellow_policy.script entry missing required 'node'");
+  if (!node.IsScalar())
+    throw std::runtime_error("yellow_policy.script node must be a string or integer");
+  const std::string raw = node.as<std::string>();
+  const std::string key = to_lower_copy(raw);
+  const auto& nodes = world.nodes();
+  for (size_t i = 0; i < nodes.size(); ++i) {
+    std::string name = to_lower_copy(nodes[i].name);
+    if (name == key) return static_cast<int>(i);
+  }
+  try {
+    size_t idx = 0;
+    const int parsed = std::stoi(raw, &idx);
+    if (idx == raw.size()) {
+      if (parsed < 0 || parsed >= static_cast<int>(world.nodes().size()))
+        throw std::runtime_error("yellow_policy.script node index out of range: " + raw);
+      return parsed;
+    }
+  } catch (const std::exception&) {
+    // fallthrough
+  }
+  throw std::runtime_error("Unknown node in yellow_policy.script: " + raw);
+}
+
+inline void validate_node_for_verb(eu::Verb verb, const eu::Node& node) {
+  switch (verb) {
+    case eu::Verb::PICK:
+      if (node.kind != eu::NodeType::PICKUP)
+        throw std::runtime_error("yellow_policy.script PICK must target a pickup node");
+      break;
+    case eu::Verb::STEAL:
+      if (node.kind != eu::NodeType::PANTRY)
+        throw std::runtime_error("yellow_policy.script STEAL must target a pantry node");
+      break;
+    case eu::Verb::PLACE:
+      if (node.kind != eu::NodeType::PANTRY && node.kind != eu::NodeType::NEST)
+        throw std::runtime_error("yellow_policy.script PLACE must target a pantry or nest");
+      break;
+    case eu::Verb::FLIP:
+      // any node is fine; action happens in-place
+      break;
+  }
+}
+
+inline eu::Action parse_script_action(const YAML::Node& node,
+                                      const eu::EurobotWorld& world) {
+  if (!node || !node.IsMap())
+    throw std::runtime_error("yellow_policy.script entries must be maps");
+  eu::Action action{};
+  const eu::Verb verb = parse_verb_field(node["verb"]);
+  action.verb = static_cast<int>(verb);
+
+  if (verb == eu::Verb::FLIP && !node["node"]) {
+    if (world.yellow_nest_node_idx < 0)
+      throw std::runtime_error("yellow nest is undefined, cannot infer node for FLIP");
+    action.node = world.yellow_nest_node_idx;
+  } else {
+    action.node = resolve_node_id(node["node"], world);
+  }
+  if (action.node < 0 || action.node >= static_cast<int>(world.nodes().size()))
+    throw std::runtime_error("yellow_policy.script node index out of bounds");
+  validate_node_for_verb(verb, world.nodes().at(action.node));
+
+  const int default_color =
+      (verb == eu::Verb::FLIP) ? static_cast<int>(eu::Col::BLUE)
+                               : static_cast<int>(eu::Col::YELLOW);
+  action.color = parse_color_field(node["color"], default_color);
+
+  const int qty = node["qty"] ? node["qty"].as<int>() : 1;
+  if (qty <= 0)
+    throw std::runtime_error("yellow_policy.script qty must be positive");
+  action.qty = qty;
+
+  return action;
+}
+
+inline void configure_yellow_policy(const YAML::Node& node, eu::EurobotWorld& world) {
+  std::string type_value = "heuristic";
+  if (node) {
+    if (node.IsScalar()) {
+      type_value = to_lower_copy(node.as<std::string>());
+    } else if (node["type"]) {
+      type_value = to_lower_copy(node["type"].as<std::string>());
+    }
+  }
+
+  if (type_value == "none") {
+    world.yellow_policy = {};
+    return;
+  }
+
+  if (type_value == "heuristic") {
+    eu::HeuristicYellowPolicyOptions opts{};
+    if (node && node.IsMap()) {
+      assign_if(node, "enable_steal", opts.enable_steal);
+      assign_if(node, "enable_flip", opts.enable_flip);
+      assign_if(node, "min_pickup_stock", opts.min_pickup_stock);
+      assign_if(node, "min_steal_stock", opts.min_steal_stock);
+      assign_if(node, "flip_threshold", opts.flip_threshold);
+    }
+    world.yellow_policy = eu::make_heuristic_yellow_policy(opts);
+    return;
+  }
+
+  if (type_value == "static" || type_value == "static_script" || type_value == "script") {
+    const YAML::Node seq = (node && node.IsMap()) ? node["script"] : YAML::Node{};
+    if (!seq || !seq.IsSequence() || seq.size() == 0)
+      throw std::runtime_error("yellow_policy.script must be a non-empty sequence");
+    eu::StaticYellowPolicyOptions opts{};
+    opts.loop = node && node.IsMap() ? get_or<bool>(node, "loop", true) : true;
+    opts.script.reserve(seq.size());
+    for (const auto& entry : seq) {
+      opts.script.push_back(parse_script_action(entry, world));
+    }
+    world.yellow_policy = eu::make_static_yellow_policy(std::move(opts));
+    return;
+  }
+
+  throw std::runtime_error("Unknown yellow_policy.type: " + type_value);
 }
 
 inline std::filesystem::path pick_config_path(int argc, char** argv) {
@@ -112,7 +273,9 @@ inline eu::EurobotWorld make_world(const YAML::Node& root) {
   const uint64_t seed      = get_or<uint64_t>(w, "seed", 42ULL);
   const bool record_hist   = get_or<bool>(w, "record_history", false);
 
-  return eu::EurobotWorld(blue, yellow, R, allow_steal, seed, record_hist);
+  eu::EurobotWorld world(blue, yellow, R, allow_steal, seed, record_hist);
+  configure_yellow_policy(root["yellow_policy"], world);
+  return world;
 }
 
 inline std::vector<int> load_hidden_sizes(const YAML::Node& root,

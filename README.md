@@ -54,6 +54,26 @@ cmake -S src/ -B build/ -DCMAKE_PREFIX_PATH=/path/to/libtorch
 cmake --build build/
 ```
 
+## Yellow robot policies
+
+The yellow robot can now be controlled by pluggable policies that live in `alphazero/yellow_policies.*`.
+Set `yellow_policy` inside your YAML config (see `configs/world.yaml`) to pick the behavior:
+
+- `type: heuristic` (default) – greedy collector that picks the richest pickups, steals when useful, and flips blue crates to yellow.
+- `type: static_script` – follow a fixed sequence of actions; accepts `loop: true|false` plus a `script` list describing each `verb/node/color/qty`.
+- `type: none` – disable automation and keep the previous no-op testing behavior.
+
+Example static script snippet:
+
+```yaml
+yellow_policy:
+  type: static_script
+  loop: true
+  script:
+    - { verb: PICK,  node: P1,          color: yellow, qty: 2 }
+    - { verb: PLACE, node: NestYellow,  color: yellow, qty: 2 }
+```
+
 ## Alternative build (docker)
 If you are on windows installation is trickier.
 To use docker do:

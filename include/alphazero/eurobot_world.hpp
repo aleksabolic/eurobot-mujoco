@@ -106,6 +106,7 @@ class EurobotWorld {
     int nest_cap() const {return NEST_CAP;}
     int num_colors() const {return NUM_COLORS;}
     int max_score() const {return max_score_;}
+    double time_left() const { return t_left_; }
 
     const std::vector<Node>& nodes() const { return nodes_; }
     const RewardConfig& reward_config() const { return r_; }

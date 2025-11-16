@@ -32,6 +32,13 @@ world:
   allow_steal: true
   seed: 42
   record_history: false
+yellow_policy:
+  type: heuristic
+  enable_steal: true
+  enable_flip: true
+  min_pickup_stock: 1
+  min_steal_stock: 1
+  flip_threshold: 2
 network:
   hidden_sizes:
     - 128

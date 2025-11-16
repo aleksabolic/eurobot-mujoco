@@ -32,6 +32,7 @@ add_library(eurobot_alphazero STATIC
   src/alphazero/policy_network.cpp
   src/alphazero/trainer.cpp
   src/alphazero/tensorboard_logger.cpp
+  src/alphazero/yellow_policies.cpp
 )
 
 target_include_directories(eurobot_alphazero
