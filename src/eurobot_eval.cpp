@@ -3,15 +3,18 @@
 #include <cctype>
 #include <cstdlib>
 #include <filesystem>
+#include <iomanip>
 #include <iostream>
 #include <optional>
 #include <stdexcept>
 #include <string>
+#include <sstream>
 #include <type_traits>
 #include <utility>
 #include <vector>
 
 #include <opencv2/videoio.hpp>
+#include <opencv2/imgcodecs.hpp>
 #include <torch/serialize/archive.h>
 #include <torch/torch.h>
 #include <yaml-cpp/yaml.h>
@@ -341,7 +344,7 @@ std::filesystem::path make_video_path(const std::filesystem::path& base, int epi
   std::filesystem::path stem = base;
   std::string ext = stem.extension().string();
   if (ext.empty()) {
-    ext = ".avi";
+    ext = ".gif";
   }
 
   stem.replace_extension();  // drop extension
@@ -351,6 +354,84 @@ std::filesystem::path make_video_path(const std::filesystem::path& base, int epi
   stem += ext;
   return stem;
 }
+
+bool is_gif_path(const std::filesystem::path& p) {
+  auto ext = p.extension().string();
+  std::transform(ext.begin(), ext.end(), ext.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
+  return ext == ".gif";
+}
+
+std::string quote_path(const std::filesystem::path& p) {
+  return "\"" + p.string() + "\"";
+}
+
+struct GifRecorder {
+  std::filesystem::path tmp_dir;
+  double fps = 1.0;
+  int frame_idx = 0;
+  bool ready = false;
+
+  explicit GifRecorder(double fps_val) : fps(std::max(1e-3, fps_val)) {}
+
+  bool start() {
+    namespace fs = std::filesystem;
+    auto base = fs::temp_directory_path() / "eurobot_gif_frames";
+    for (int attempt = 0; attempt < 10; ++attempt) {
+      auto candidate = base;
+      candidate += "_" + std::to_string(std::chrono::high_resolution_clock::now().time_since_epoch().count() + attempt);
+      std::error_code ec;
+      if (fs::create_directories(candidate, ec) && !ec) {
+        tmp_dir = candidate;
+        ready = true;
+        frame_idx = 0;
+        return true;
+      }
+    }
+    return false;
+  }
+
+  bool add_frame(const cv::Mat& frame) {
+    if (!ready) return false;
+    namespace fs = std::filesystem;
+    std::ostringstream name;
+    name << "frame_" << std::setfill('0') << std::setw(5) << frame_idx << ".png";
+    auto path = tmp_dir / name.str();
+    ++frame_idx;
+    return cv::imwrite(path.string(), frame);
+  }
+
+  bool finalize(const std::filesystem::path& output_path) {
+    namespace fs = std::filesystem;
+    if (!ready) return false;
+    if (frame_idx == 0) {
+      fs::remove_all(tmp_dir);
+      ready = false;
+      return false;
+    }
+
+    const auto pattern = tmp_dir / "frame_%05d.png";
+    const auto palette = tmp_dir / "palette.png";
+
+    std::ostringstream fps_stream;
+    fps_stream << std::setprecision(6) << fps;
+    const std::string fps_arg = fps_stream.str();
+
+    std::string cmd_palette = "ffmpeg -y -loglevel error -framerate " + fps_arg +
+                              " -i " + quote_path(pattern) +
+                              " -vf palettegen " + quote_path(palette);
+    std::string cmd_gif = "ffmpeg -y -loglevel error -framerate " + fps_arg +
+                          " -i " + quote_path(pattern) +
+                          " -i " + quote_path(palette) +
+                          " -lavfi paletteuse " + quote_path(output_path);
+
+    const int ret1 = std::system(cmd_palette.c_str());
+    const int ret2 = (ret1 == 0) ? std::system(cmd_gif.c_str()) : -1;
+
+    fs::remove_all(tmp_dir);
+    ready = false;
+    return ret1 == 0 && ret2 == 0;
+  }
+};
 
 eurobot::RobotProfile load_profile(const YAML::Node& node) {
   if (!node) {
@@ -474,6 +555,16 @@ int main(int argc, char** argv) {
     cv::VideoWriter writer;
     bool video_ready = false;
 
+    std::optional<GifRecorder> gif_recorder;
+    const bool write_gif = !video_path.empty() && is_gif_path(video_path);
+    if (write_gif) {
+      gif_recorder.emplace(opts.fps);
+      if (!gif_recorder->start()) {
+        std::cerr << "Warning: failed to create temp directory for GIF frames; GIF export disabled.\n";
+        gif_recorder.reset();
+      }
+    }
+
     bool done = false;
     int step = 0;
 
@@ -499,27 +590,41 @@ int main(int argc, char** argv) {
       auto frame = renderer.draw_snapshot(world, std::nullopt, {}, opts.show_window, value_pred);
 
       if (!video_path.empty()) {
-        if (!video_ready) {
-          const double fps = std::max(opts.fps, 1e-3);
-          const int fourcc = cv::VideoWriter::fourcc('M', 'J', 'P', 'G');
-          video_ready = writer.open(video_path.string(), fourcc, fps,
-                                    frame.size(), /*isColor=*/true);
-          if (!video_ready) {
-            std::cerr << "Warning: failed to open video writer at "
-                      << video_path << std::endl;
+        if (gif_recorder) {
+          if (!gif_recorder->add_frame(frame)) {
+            std::cerr << "Warning: failed to write GIF frame " << step << "\n";
           }
-        }
-        if (video_ready) {
-          writer.write(frame);
+        } else {
+          if (!video_ready) {
+            const double fps = std::max(opts.fps, 1e-3);
+            const int fourcc = cv::VideoWriter::fourcc('M', 'J', 'P', 'G');
+            video_ready = writer.open(video_path.string(), fourcc, fps,
+                                      frame.size(), /*isColor=*/true);
+            if (!video_ready) {
+              std::cerr << "Warning: failed to open video writer at "
+                        << video_path << std::endl;
+            }
+          }
+          if (video_ready) {
+            writer.write(frame);
+          }
         }
       }
     }
 
     std::cout<< "Made: "<< step << " number of steps."<<std::endl;
 
-    if (writer.isOpened()) {
-      writer.release();
-      std::cout << "Saved video: " << video_path << std::endl;
+    if (gif_recorder) {
+      if (gif_recorder->finalize(video_path)) {
+        std::cout << "Saved GIF: " << video_path << std::endl;
+      } else {
+        std::cerr << "Failed to finalize GIF at " << video_path << std::endl;
+      }
+    } else {
+      if (writer.isOpened()) {
+        writer.release();
+        std::cout << "Saved video: " << video_path << std::endl;
+      }
     }
 
     const auto scores = world.final_scores();
